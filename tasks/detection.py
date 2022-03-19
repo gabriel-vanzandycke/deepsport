@@ -1,21 +1,17 @@
 from dataclasses import dataclass
 from functools import cached_property
-import random
 
 import numpy as np
 import pandas
 import tensorflow as tf
 
-from calib3d import Point3D
-from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics# SingleKeypointDetectionMetricsLayer
+from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics
 
 from experimentator import Callback, ChunkProcessor, ExperimentMode
 from experimentator.tf2_experiment import TensorflowExperiment
 
-from dataset_utilities.ds.instants_dataset.views_transforms import ViewRandomCropperTransform
-
 class HeatmapDetectionExperiment(TensorflowExperiment):
-    batch_input_names = ["batch_target", "batch_input_image"]
+    batch_inputs_names = ["batch_target", "batch_input_image"]
     @cached_property
     def metrics(self):
         metrics = ["TP", "FP", "TN", "FN", "topk_TP", "topk_FP", "P", "N"]

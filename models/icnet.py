@@ -5,7 +5,7 @@ import tensorflow as tf
 from experimentator import ChunkProcessor
 from icnet_tf2 import ICNetModel
 
-class CustomICNet(ChunkProcessor):
+class ICNetBackbone(ChunkProcessor):
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs

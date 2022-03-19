@@ -1,3 +1,7 @@
+from functools import cached_property
+
+import tensorflow as tf
+
 from experimentator import ChunkProcessor
 from tf_layers import GammaColorAugmentation
 
@@ -15,3 +19,18 @@ class GammaAugmentation(ChunkProcessor):
         chunk[self.tensor_name] = self.layer(chunk[self.tensor_name])
     def __call__(self, chunk):
         self.color_augmentation(chunk)
+
+
+class LeNetHead(ChunkProcessor):
+    def __init__(self, output_features):
+        self.output_features = output_features
+    @cached_property
+    def model(self):
+        return tf.keras.Sequential([
+            tf.keras.layers.Flatten(),
+            tf.keras.layers.Dense(120, activation='relu'),
+            tf.keras.layers.Dense(84, activation='relu'),
+            tf.keras.layers.Dense(self.output_features),
+        ])
+    def __call__(self, chunk):
+        chunk["batch_logits"] = self.model(chunk["batch_logits"])
