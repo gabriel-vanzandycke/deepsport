@@ -20,7 +20,7 @@ class HeatmapDetectionExperiment(TensorflowExperiment):
         }
     @cached_property
     def outputs(self):
-        outputs = ["batch_heatmap", "topk_indices", "topk_outputs", "topk"]
+        outputs = ["batch_heatmap", "topk_indices", "topk_outputs", "topk_targets"]
         return {
             name:self.chunk[name] for name in outputs if name in self.chunk
         }
@@ -144,7 +144,7 @@ class ComputeKeypointsDetectionHitmap(ChunkProcessor):
         self.peak_local_max = PeakLocalMax(min_distance=non_max_suppression_pool_size//2, thresholds=thresholds)
 
     def __call__(self, chunk):
-        chunk["batch_hitmap"] = self.peak_local_max(self.avoid_local_eq(chunk["batch_output"])) # B,H,W,C,T [bool]
+        chunk["batch_hitmap"] = self.peak_local_max(self.avoid_local_eq(chunk["batch_heatmap"])) # B,H,W,C,T [bool]
 
 class ComputeKeypointsDetectionMetrics(ChunkProcessor):
     def __init__(self):
@@ -162,25 +162,40 @@ class ComputeKeypointsDetectionMetrics(ChunkProcessor):
 
 class ConfidenceHitmap(ChunkProcessor):
     def __call__(self, chunk):
-        chunk["batch_confidence_hitmap"] = tf.cast(chunk["batch_hitmap"], tf.float32)*chunk["batch_output"][..., tf.newaxis]
+        chunk["batch_confidence_hitmap"] = tf.cast(chunk["batch_hitmap"], tf.float32)*chunk["batch_heatmap"][..., tf.newaxis]
 
-class ComputeKeypointsTopKDetectionMetrics(ChunkProcessor):
+class ComputeTopK(ChunkProcessor):
     def __init__(self, k):
+        """ From a `confidence_hitmap` tensor where peaks are identified with non-zero pixels whose
+            value correspnod to the peaks intensity, compute the `topk_indices` holding (x,y) positions
+            and `topk_outputs` holding the intensity of the `k` highest peaks.
+            Inputs:
+                batch_confidence_hitmap - a (B,H,W,C,N) tensor where C is the number of keypoint types
+                                          and N is the threshold dimension where only peaks above the
+                                          corresponding threshold are reported.
+            Outputs:
+                topk_outputs - a (B,C,N,K) tensor where values along the K dimensions are sorted by
+                               peak intensity.
+                topk_indices - a (B,C,N,K,S) tensor where x coordinates are located in S=0 and y
+                               coordinates are located in S=1.
+        """
         self.k = np.max(k)
     def __call__(self, chunk):
-        assert len(chunk["batch_target"].get_shape()) == 3 or chunk["batch_target"].get_shape()[3] == 1, \
-            "Only one keypoint type is allowed. If 'batch_target' is one_hot encoded, it needs to be compressed before."
+        # Flatten hitmap to feed `top_k`
         _, H, W, C, N = [tf.shape(chunk["batch_confidence_hitmap"])[d] for d in range(5)]
-
-        batch_target = tf.cast(chunk["batch_target"], tf.int32)
-        batch_target = batch_target[..., 0] if len(batch_target.shape) == 4 else batch_target
-
         shape = [-1, C, N, H*W]
         flatten_hitmap = tf.reshape(tf.transpose(chunk["batch_confidence_hitmap"], perm=[0,3,4,1,2]), shape=shape)
         topk_values, topk_indices = tf.math.top_k(flatten_hitmap, k=self.k, sorted=True)
-        #gather_indices = np.array(self.k)-1 # k=[1,2,10] corresponds to indices [0,1,9]
-        chunk["topk_outputs"] = topk_values#tf.gather(values, gather_indices, axis=-1)
-        chunk["topk_indices"] = tf.stack(((topk_indices // W), (topk_indices % W)), -1)#, gather_indices, axis=-2)
+
+        chunk["topk_outputs"] = topk_values # B, C, K
+        chunk["topk_indices"] = tf.stack(((topk_indices // W), (topk_indices % W)), -1) # B, C, K, D
+        
+class ComputeKeypointsTopKDetectionMetrics(ChunkProcessor):
+    def __call__(self, chunk):
+        assert len(chunk["batch_target"].get_shape()) == 3 or chunk["batch_target"].get_shape()[3] == 1, \
+            "Only one keypoint type is allowed. If 'batch_target' is one_hot encoded, it needs to be compressed before."
+        batch_target = tf.cast(chunk["batch_target"], tf.int32)
+        batch_target = batch_target[..., 0] if len(batch_target.shape) == 4 else batch_target
         chunk["topk_targets"] = tf.gather_nd(batch_target, chunk["topk_indices"], batch_dims=1)
 
         chunk["P"] = tf.cast(tf.reduce_any(batch_target!=0, axis=[1,2]), tf.int32)

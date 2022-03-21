@@ -58,6 +58,7 @@ callbacks = [
     experimentator.LogStateDataCollector(),
     experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
     tasks.ballsize.ComputeDiameterError(),
+    tasks.ballsize.ComputeDetectionMetrics(),
 ]
 
 alpha = 0.5

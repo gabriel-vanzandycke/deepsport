@@ -3,18 +3,21 @@ import mlworkflow as mlwf
 import experimentator
 from experimentator.utils import find
 import experimentator.tf2_experiment
-import experimentator.tf2_chunk_processors
 import dataset_utilities.ds.instants_dataset
 import models.other
-import models.icnet
+import tasks.ballsize
 import tasks.detection
+import tasks.ballsize_from_ballseg
+
 
 experiment_type = [
     experimentator.AsyncExperiment,
     experimentator.CallbackedExperiment,
     experimentator.tf2_experiment.TensorflowExperiment,
-    tasks.detection.HeatmapDetectionExperiment
+    tasks.ballsize_from_ballseg.BallSizeFromBallSegExperiment
 ]
+
+batch_size = 2
 
 # Dataset parameters
 output_shape = (640, 640)
@@ -23,57 +26,58 @@ output_shape = (640, 640)
 dataset_name = "camera_views_with_ball_visible.pickle"
 size_min = 14
 size_max = 37
-globals().update(locals()) # required to use 'tf' in lambdas
+on_ball = False
 transforms = [
     dataset_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
         output_shape=output_shape,
         size_min=size_min,
-        size_max=size_max
+        size_max=size_max,
+        on_ball=on_ball,
+        margin=100
     ),
     dataset_utilities.transforms.DataExtractorTransform(
         dataset_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
+        dataset_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
+        dataset_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
+        dataset_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
         dataset_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
     )
 ]
-
 dataset_splitter = dataset_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
 subsets = dataset_splitter(dataset)
 
 
+k = 4
 
 # Training parameters
-batch_size      = 16
-
-k = [1]
-decay_start = (100, 200, 300)
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
-    tasks.detection.ComputeTopkMetrics(k=k),
-    tasks.detection.AuC("top1-AuC", "top1_metrics"),
     experimentator.SaveWeights(),
     experimentator.SaveLearningRate(),
     experimentator.GatherCycleMetrics(),
     experimentator.LogStateDataCollector(),
-    experimentator.LearningRateDecay(start=decay_start, duration=10, factor=0.1),
+    experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=0.5),
+    tasks.ballsize_from_ballseg.ReapeatData(names=['batch_calib', 'batch_ball'], k=k),
+    tasks.ballsize.ComputeDiameterError(),
+    tasks.ballsize.ComputeDetectionMetrics(),
+    tasks.detection.AuC("top1-AuC", "top1_metrics"),
+    tasks.ballsize_from_ballseg.ComputeBallSegTopkMetrics(k=[1]),
+    tasks.detection.AuC("ballseg_top1-AuC", "ballseg_top1_metrics"),
+    tasks.ballsize_from_ballseg.ComputeDiameterErrorFromPatchHeatmap(),
 ]
 
+
+oracle = False
+side_length = 64
+
+globals().update(locals()) # required to use 'tf' in lambdas
+ballseg_config = None
 chunk_processors = [
-    #experiment.chunk_processors.CropBlockDividable(tensor_names=["batch_input_image", "batch_target"]),
-    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_target"]),
-    models.other.GammaAugmentation("batch_input_image"),
-    lambda chunk: chunk.update({'batch_input': chunk['batch_input_image']}),
-    experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
-    models.icnet.ICNetBackbone(),
-    models.icnet.ICNetHead(num_classes=1),
-    experimentator.tf2_chunk_processors.SigmoidCrossEntropyLoss(),
-    lambda chunk: chunk.update({"batch_heatmap": tf.nn.sigmoid(chunk["batch_logits"])}),
-    tasks.detection.ComputeKeypointsDetectionHitmap(non_max_suppression_pool_size=int(size_max*1.1)),
-    tasks.detection.ConfidenceHitmap(),
-    tasks.detection.ComputeTopK(k=k),
-    lambda chunk: chunk.update({"batch_target": tf.nn.max_pool2d(chunk["batch_target"][..., tf.newaxis], int(size_min/2), strides=1, padding='SAME')}), # enlarge target
-    tasks.detection.ComputeKeypointsTopKDetectionMetrics()
+    tasks.ballsize_from_ballseg.BallSegModel(config=ballseg_config, batch_size=batch_size, k=k, output_shape=output_shape),
+    tasks.ballsize_from_ballseg.BallSegCandidates(side_length, oracle=oracle),
+    tasks.ballsize_from_ballseg.CNNModel(batch_size=batch_size*k, side_length=side_length)
 ]
 
-learning_rate   = 1e-3
+learning_rate = 1e-4
 optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)

@@ -11,6 +11,8 @@ from experimentator.tf2_chunk_processors import ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator import Callback, ExperimentMode
 
+from .detection import divide
+
 BALL_DIAMETER = 23
 
 
@@ -61,11 +63,54 @@ class ComputeDiameterError(Callback):
             self.acc["projection_error"].append(projection_error)
             self.acc["relative_error"].append(relative_error)
     def on_cycle_end(self, state, **_): # state in R/W mode
-        df = pandas.DataFrame(np.vstack(list(self.acc.values())).T, columns=self.acc.keys())
-        state["ball_size_metrics"] = df
-        state["MADE"] = np.mean(np.abs(df['diameter_error']))
-        state["MAPE"] = np.mean(np.abs(df['projection_error']))
-        state["MARE"] = np.mean(np.abs(df['relative_error']))
+        try:
+            df = pandas.DataFrame(np.vstack(list(self.acc.values())).T, columns=self.acc.keys())
+            state["ball_size_metrics"] = df
+            state["MADE"] = np.mean(np.abs(df['diameter_error']))
+            state["MAPE"] = np.mean(np.abs(df['projection_error']))
+            state["MARE"] = np.mean(np.abs(df['relative_error']))
+        except ValueError:
+            state["ball_size_metrics"] = None
+            for name in ["MADE", "MAPE", "MARE"]:
+                state[name] = np.nan
+@dataclass
+class ComputeDetectionMetrics(Callback):
+    before = ["AuC", "GatherCycleMetrics"]
+    when = ExperimentMode.EVAL
+    thresholds: (int, np.ndarray, list, tuple) = np.linspace(0,1,101)
+    def init(self, exp):
+        self.k = exp.cfg.get('k', 1)
+    def on_cycle_begin(self, **_):
+        self.acc = {"TP": 0, "FP": 0, "TN": 0, "FN": 0, "P": 0, "N": 0}
+    def on_batch_end(self, target_is_ball, predicted_is_ball, batch_ball, ballseg_P=None, **_):
+        balls, inverse = np.unique(np.array(batch_ball), axis=0, return_inverse=True)
+        for index, _ in enumerate(balls):
+            indices = np.where(inverse==index)[0]
+
+            # keep index with the largest confidence
+            i = indices[np.argmax(predicted_is_ball[indices])]
+            output = (predicted_is_ball[np.newaxis, i] > self.thresholds[...,np.newaxis]).astype(np.uint8)
+            target = target_is_ball[np.newaxis, i]
+            self.acc['TP'] += np.sum(  target   *   output  , axis=1)
+            self.acc['FP'] += np.sum((1-target) *   output  , axis=1)
+            self.acc['FN'] += np.sum(  target   * (1-output), axis=1)
+            self.acc['TN'] += np.sum((1-target) * (1-output), axis=1)
+            has_ball = ballseg_P[i//self.k]
+            self.acc['P']  += has_ball
+            self.acc['N']  += 1 - has_ball
+    def on_cycle_end(self, state, **_):
+        FP = self.acc["FP"]
+        TP = self.acc["TP"]
+        P = np.array(self.acc["P"])[np.newaxis]
+        N = np.array(self.acc["N"])[np.newaxis]
+        data = {
+            "thresholds": self.thresholds,
+            "FP rate": divide(FP, P + N),  # #-possible cases is the number of images
+            "TP rate": divide(TP, P),      # #-possible cases is the number of images on which there's a ball to detect
+            "precision": divide(TP, TP + FP),
+            "recall": divide(TP, P),
+            }
+        state["top1_metrics"] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
 
 
 class NamedOutputs(ChunkProcessor):
