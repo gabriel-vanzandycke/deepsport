@@ -4,6 +4,8 @@ from functools import cached_property
 import pandas
 
 import numpy as np
+import skimage.feature
+import skimage.transform
 import tensorflow as tf
 
 from experimentator import Callback, ExperimentMode, build_experiment
@@ -15,7 +17,7 @@ from dataset_utilities.court import Court
 from dataset_utilities.calib import Calib, Point3D, Point2D
 
 from .detection import ComputeTopkMetrics
-from .ballsize import BALL_DIAMETER
+from .ballsize import BALL_DIAMETER, compute_projection_error, compute_relative_error
 
 class BallSizeFromBallSegExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_target", "batch_input_image", "batch_ball_size"]
@@ -33,15 +35,20 @@ class BallSizeFromBallSegExperiment(TensorflowExperiment):
 
 @dataclass
 class ReapeatData(Callback):
-    before = ["ComputeDiameterError"]
+    before = ["ComputeDiameterError", "ComputeDiameterErrorFromPatchHeatmap"]
     when = ExperimentMode.EVAL
     def __init__(self, names, k):
         self.names = names
         self.k = k
-    def on_batch_end(self, **state):
+    def on_batch_end(self, state, **_): # state in R/W mode
         for name in self.names:
             state[name] = [v for v in state[name] for k in range(self.k)]
 
+class DeriveHasBall(Callback):
+    before = ["ComputeDetectionMetrics"]
+    when = ExperimentMode.EVAL
+    def on_batch_end(self, state, **_): # state in R/W mode
+        state['batch_has_ball'] = [v for v in state['ballseg_P'] for k in range(self.k)]
 
 @dataclass
 class ComputeBallSegTopkMetrics(ComputeTopkMetrics):
@@ -72,8 +79,8 @@ class HoughCircle():
         # Test different radius
         size_min = size_min or self.size_min
         size_max = size_max or self.size_max
-        min_radius = int(self.size_min/2) # radius = diameter/2
-        max_radius = int(self.size_max/2) # radius = diameter/2
+        min_radius = int(size_min/2) # radius = diameter/2
+        max_radius = int(size_max/2) # radius = diameter/2
         radii = np.arange(min_radius, max_radius+1, self.step)
 
         H = skimage.transform.hough_circle(edges, radii, normalize=self.normalize)
@@ -98,6 +105,8 @@ def expected_range(calib: Calib, ball: Point2D, court: Court=None, max_ball_heig
 
 @dataclass
 class ComputeDiameterErrorFromPatchHeatmap(Callback):
+    before = ["GatherCycleMetrics"]
+    when = ExperimentMode.EVAL
     def __post_init__(self):
         self.hc = HoughCircle()
     def init(self, exp):
@@ -216,8 +225,6 @@ class BallSegCandidates(ChunkProcessor):
             )
             chunk["batch_ball_size"] = tf.reshape(chunk["batch_ball_size"], [-1])
 
-
-        #chunk["batch_ballseg_value"] =
         for name in ['P', 'N', 'topk_TP', 'topk_FP']:
             if name in chunk:
                 chunk["ballseg_P"] = chunk['P']

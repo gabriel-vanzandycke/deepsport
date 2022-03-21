@@ -77,25 +77,25 @@ class ComputeDiameterError(Callback):
 class ComputeDetectionMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
-    thresholds: (int, np.ndarray, list, tuple) = np.linspace(0,1,101)
+    thresholds: (int, np.ndarray, list, tuple) = np.linspace(0,1,51)
     def init(self, exp):
         self.k = exp.cfg.get('k', 1)
     def on_cycle_begin(self, **_):
         self.acc = {"TP": 0, "FP": 0, "TN": 0, "FN": 0, "P": 0, "N": 0}
-    def on_batch_end(self, target_is_ball, predicted_is_ball, batch_ball, ballseg_P=None, **_):
+    def on_batch_end(self, target_is_ball, predicted_is_ball, batch_ball, batch_has_ball=None, **_):
         balls, inverse = np.unique(np.array(batch_ball), axis=0, return_inverse=True)
         for index, _ in enumerate(balls):
             indices = np.where(inverse==index)[0]
 
             # keep index with the largest confidence
             i = indices[np.argmax(predicted_is_ball[indices])]
-            output = (predicted_is_ball[np.newaxis, i] > self.thresholds[...,np.newaxis]).astype(np.uint8)
-            target = target_is_ball[np.newaxis, i]
-            self.acc['TP'] += np.sum(  target   *   output  , axis=1)
-            self.acc['FP'] += np.sum((1-target) *   output  , axis=1)
-            self.acc['FN'] += np.sum(  target   * (1-output), axis=1)
-            self.acc['TN'] += np.sum((1-target) * (1-output), axis=1)
-            has_ball = ballseg_P[i//self.k]
+            output = (predicted_is_ball[i] > self.thresholds).astype(np.uint8)
+            target = target_is_ball[i]
+            self.acc['TP'] +=   target   *   output  
+            self.acc['FP'] += (1-target) *   output  
+            self.acc['FN'] +=   target   * (1-output)
+            self.acc['TN'] += (1-target) * (1-output)
+            has_ball = batch_has_ball[i] if batch_has_ball else target
             self.acc['P']  += has_ball
             self.acc['N']  += 1 - has_ball
     def on_cycle_end(self, state, **_):
