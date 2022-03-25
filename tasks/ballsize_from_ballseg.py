@@ -8,13 +8,13 @@ import skimage.feature
 import skimage.transform
 import tensorflow as tf
 
+from calib3d import Calib, Point3D, Point2D
 from experimentator import Callback, ExperimentMode, build_experiment
 from experimentator.utils import find
 from experimentator.tf2_chunk_processors import ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 
-from dataset_utilities.court import Court
-from dataset_utilities.calib import Calib, Point3D, Point2D
+from deepsport_utilities.court import Court
 
 from .detection import ComputeTopkMetrics
 from .ballsize import BALL_DIAMETER, compute_projection_error, compute_relative_error

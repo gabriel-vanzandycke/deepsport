@@ -3,7 +3,7 @@ import mlworkflow as mlwf
 import experimentator
 from experimentator.utils import find
 import experimentator.tf2_experiment
-import dataset_utilities.ds.instants_dataset
+import deepsport_utilities.ds.instants_dataset
 import tasks.ballsize
 import models.other
 import models.tensorflow
@@ -31,22 +31,22 @@ size_max = 45
 max_shift = 10
 on_ball = False
 transforms = [
-    dataset_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
+    deepsport_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
         on_ball=on_ball,
         output_shape=output_shape,
         size_min=size_min,
         size_max=size_max,
         margin=side_length//2-max_shift
     ),
-    dataset_utilities.transforms.DataExtractorTransform(
-        dataset_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
-        dataset_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
-        dataset_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
-        dataset_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
+    deepsport_utilities.transforms.DataExtractorTransform(
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
     )
 ]
 
-dataset_splitter = dataset_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
+dataset_splitter = deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
 subsets = dataset_splitter(dataset)
 

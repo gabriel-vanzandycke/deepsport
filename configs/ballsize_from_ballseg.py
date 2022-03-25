@@ -3,7 +3,7 @@ import mlworkflow as mlwf
 import experimentator
 from experimentator.utils import find
 import experimentator.tf2_experiment
-import dataset_utilities.ds.instants_dataset
+import deepsport_utilities.ds.instants_dataset
 import models.other
 import tasks.ballsize
 import tasks.detection
@@ -28,22 +28,22 @@ size_min = 14
 size_max = 37
 on_ball = False
 transforms = [
-    dataset_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
+    deepsport_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
         output_shape=output_shape,
         size_min=size_min,
         size_max=size_max,
         on_ball=on_ball,
         margin=100
     ),
-    dataset_utilities.transforms.DataExtractorTransform(
-        dataset_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
-        dataset_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
-        dataset_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
-        dataset_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
-        dataset_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
+    deepsport_utilities.transforms.DataExtractorTransform(
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
     )
 ]
-dataset_splitter = dataset_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
+dataset_splitter = deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
 subsets = dataset_splitter(dataset)
 
@@ -71,8 +71,8 @@ callbacks = [
 oracle = False
 side_length = 64
 
-globals().update(locals()) # required to use 'tf' in lambdas
 ballseg_config = None
+globals().update(locals()) # required to use 'tf' in lambdas
 chunk_processors = [
     tasks.ballsize_from_ballseg.BallSegModel(config=ballseg_config, batch_size=batch_size, k=k, output_shape=output_shape),
     tasks.ballsize_from_ballseg.BallSegCandidates(side_length, oracle=oracle),

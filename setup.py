@@ -17,7 +17,7 @@ setup(
         "numpy",
         "calib3d",
         "pandas",
-        "aleatorpy",
+        "deepsport-utilities"
         "experimentator @ git+https://github.com/gabriel-vanzandycke/experimentator@main",
         "tf_layers @ git+https://github.com/gabriel-vanzandycke/tf_layers@main",
         "icnet_tf2 @ git+https://github.com/gabriel-vanzandycke/icnet_tf2@master",

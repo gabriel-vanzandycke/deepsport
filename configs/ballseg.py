@@ -4,7 +4,7 @@ import experimentator
 from experimentator.utils import find
 import experimentator.tf2_experiment
 import experimentator.tf2_chunk_processors
-import dataset_utilities.ds.instants_dataset
+import deepsport_utilities.ds.instants_dataset
 import models.other
 import models.icnet
 import tasks.detection
@@ -23,20 +23,19 @@ output_shape = (640, 640)
 dataset_name = "camera_views_with_ball_visible.pickle"
 size_min = 14
 size_max = 37
-globals().update(locals()) # required to use 'tf' in lambdas
 transforms = [
-    dataset_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
+    deepsport_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
         output_shape=output_shape,
         size_min=size_min,
         size_max=size_max
     ),
-    dataset_utilities.transforms.DataExtractorTransform(
-        dataset_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
-        dataset_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
+    deepsport_utilities.transforms.DataExtractorTransform(
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
     )
 ]
 
-dataset_splitter = dataset_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
+dataset_splitter = deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
 subsets = dataset_splitter(dataset)
 
@@ -58,8 +57,8 @@ callbacks = [
     experimentator.LearningRateDecay(start=decay_start, duration=10, factor=0.1),
 ]
 
+globals().update(locals()) # required to use 'tf' in lambdas
 chunk_processors = [
-    #experiment.chunk_processors.CropBlockDividable(tensor_names=["batch_input_image", "batch_target"]),
     experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_target"]),
     models.other.GammaAugmentation("batch_input_image"),
     lambda chunk: chunk.update({'batch_input': chunk['batch_input_image']}),
