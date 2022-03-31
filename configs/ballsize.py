@@ -8,9 +8,6 @@ import tasks.ballsize
 import models.other
 import models.tensorflow
 
-import experiment.datasets.ball_dataset
-from experiment import chunk_processors
-
 experiment_type = [
     experimentator.AsyncExperiment,
     experimentator.CallbackedExperiment,
