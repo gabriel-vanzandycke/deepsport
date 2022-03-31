@@ -2,13 +2,13 @@ import os
 from setuptools import setup, find_packages
 
 setup(
-    name='ball3d',
+    name='deepsport',
     author='Gabriel Van Zandycke',
     author_email="gabriel.vanzandycke@hotmail.com",
-    url="https://github.com/gabriel-vanzandycke/ball3d",
+    url="https://github.com/gabriel-vanzandycke/deepsport",
     licence="LGPL",
     python_requires='>=3.8',
-    description="Experiments for ball detection and ball 3D estimation",
+    description="Software made public for my PhD addressing ball detection and ball 3D localization",
     version='1.0.0',
     packages=find_packages(),
     install_requires=[
