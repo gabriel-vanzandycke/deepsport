@@ -23,7 +23,7 @@ batch_size = 2
 output_shape = (640, 640)
 
 # DeepSport Dataset
-dataset_name = "camera_views_with_ball_visible.pickle"
+dataset_name = "/DATA/datasets/gva/deepsport-camera-views-dataset.pickle"
 size_min = 14
 size_max = 37
 on_ball = False
