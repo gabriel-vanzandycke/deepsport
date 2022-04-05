@@ -1,6 +1,7 @@
+import argparse
 import os
 from tqdm.auto import tqdm
-from mlworkflow import PickledDataset, FilteredDataset
+from mlworkflow import PickledDataset, FilteredDataset, TransformedDataset
 from deepsport_utilities import import_dataset
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, DownloadFlags, ViewsDataset, BuildCameraViews, AddBallAnnotation
 
@@ -17,7 +18,7 @@ dataset_config = {
 }
 
 # Import dataset
-database_file = os.path.join([args.dataset_folder, "basketball-instants-dataset.json"])
+database_file = os.path.join(args.dataset_folder, "basketball-instants-dataset.json")
 ds = import_dataset(InstantsDataset, database_file, **dataset_config)
 
 # Transform the dataset of instants into a dataset of views for each camera
