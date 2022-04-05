@@ -7,20 +7,15 @@ It goes along with several open-source libraries that I developed during that ti
  - [deepsport-utilities](https://gitlab.com/deepsport/deepsport_utilities): the toolkit for the datasets published during the deepsport project.
 
 # Installation
-```
+Clone and install the repository with
+```bash
 git clone https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
 conda create --name deepsport python=3.8   # optional 
 pip install -e .
 ```
 
-## Setup environment
-
-Based on your specific environment, you should create and edit the file `.env` using the provided template:
-```
-cp .env.template .env
-```
-
+Using `.env.template`, set-up your specific environment by defining `DATA_PATH` to the list of folders to be looked-up when looking for datasets, results or configuration files.
 
 # Dataset
 
