@@ -15,7 +15,9 @@ conda create --name deepsport python=3.8   # optional
 pip install -e .
 ```
 
-Using `.env.template`, create `.env` file and set `DATA_PATH` to the list of folders to be looked-up when looking for datasets, results or configuration files.
+Setup your environment by copying `.env.template` to `.env` and set:
+- `DATA_PATH` to the list of folders to find datasets or configuration files, ordered by lookup priority.
+- `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
 
 # Dataset
 
