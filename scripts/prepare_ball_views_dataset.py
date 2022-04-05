@@ -29,5 +29,6 @@ ds = TransformedDataset(ds, [AddBallAnnotation()])
 
 # Save the working dataset to disk with data contiguously stored for efficient reading during training
 output_folder = args.output_folder or args.dataset_folder
-PickledDataset.create(ds, os.path.join(output_folder, "ball_views.pickle"), yield_keys_wrapper=tqdm)
-
+path = os.path.join(output_folder, "ball_views.pickle")
+PickledDataset.create(ds, path, yield_keys_wrapper=tqdm)
+print(f"Successfully generated {path}")

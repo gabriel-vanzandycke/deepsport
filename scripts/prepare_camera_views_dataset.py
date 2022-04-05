@@ -7,7 +7,7 @@ from deepsport_utilities.ds.instants_dataset import InstantsDataset, DownloadFla
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset-folder", help="Basketball Instants Dataset folder")
-parser.add_argument("--output-folder", help="Folder in which specific dataset will be created")
+parser.add_argument("--output-folder", default=None, help="Folder in which specific dataset will be created. Defaults to `dataset_folder` given in arguments.")
 args = parser.parse_args()
 
 
@@ -31,4 +31,7 @@ ds = TransformedDataset(ds, [AddBallAnnotation()])
 ds = FilteredDataset(ds, predicate=lambda k,v: k.camera == v.ball.camera)
 
 # Save the working dataset to disk with data contiguously stored for efficient reading during training
-PickledDataset.create(ds, os.path.join(args.output_folder, "camera_with_ball_visible_views.pickle"), yield_keys_wrapper=tqdm)
+output_folder = args.output_folder or args.dataset_folder
+path = os.path.join(output_folder, "camera_with_ball_visible_views.pickle")
+PickledDataset.create(ds, path, yield_keys_wrapper=tqdm)
+print(f"Successfully generated {path}")
