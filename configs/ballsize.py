@@ -22,7 +22,7 @@ side_length = 64
 output_shape = (side_length, side_length)
 
 # DeepSport Dataset
-dataset_name = "/DATA/datasets/gva/deepsport-camera-views-dataset.pickle"
+dataset_name = "ball_views.pickle"
 size_min = 14
 size_max = 45
 max_shift = 10
