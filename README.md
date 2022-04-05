@@ -10,16 +10,16 @@ It goes along with several open-source libraries that I developed during that ti
 ```
 git clone https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
-conda create --name ball3d python=3.8   # recommended
+conda create --name deepsport python=3.8   # optional 
 pip install -e .
 ```
 
 ## Setup environment
+
+Based on your specific environment, you should create and edit the file `.env` using the provided template:
 ```
 cp .env.template .env
-sed 's/TODO/`pwd`/g' .env
 ```
-You should update `.env` file based on your environment
 
 
 # Dataset
