@@ -34,8 +34,8 @@ class BallRandomCropperTransform(ViewRandomCropperTransform):
             self.true_size = 100
 
     def _get_current_parameters(self, view_key, view):
-        keypoints = view.calib.project_3D_to_2D(view.ball)
-        size = float(view.calib.compute_length2D(self.true_size, view.ball))
+        keypoints = view.calib.project_3D_to_2D(view.ball.center)
+        size = float(view.calib.compute_length2D(self.true_size, view.ball.center))
         input_shape = view.calib.width, view.calib.height
         return keypoints, size, input_shape
 
