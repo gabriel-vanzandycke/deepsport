@@ -26,10 +26,8 @@ dataset_name = "ball_views.pickle"
 size_min = 14
 size_max = 45
 max_shift = 10
-on_ball = False
 transforms = [
-    deepsport_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
-        on_ball=on_ball,
+    tasks.ballsize.BallRandomCropperTransform(
         output_shape=output_shape,
         size_min=size_min,
         size_max=size_max,

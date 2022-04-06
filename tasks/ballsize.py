@@ -6,7 +6,7 @@ import tensorflow as tf
 import numpy as np
 
 from calib3d import Calib, Point3D, Point2D
-
+from deepsport_utilities.ds.instants_dataset.views_transforms import ViewRandomCropperTransform
 from experimentator.tf2_chunk_processors import ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator import Callback, ExperimentMode
@@ -20,6 +20,26 @@ class BallSizeEstimation(TensorflowExperiment):
     batch_inputs_names = ["batch_ball_size", "batch_input_image"]
     batch_metrics_names = ["target_is_ball", "predicted_is_ball", "predicted_diameter", "regression_loss", "classification_loss"]
     batch_outputs_names = ["predicted_diameter", "predicted_is_ball"]
+
+class BallRandomCropperTransform(ViewRandomCropperTransform):
+    def __init__(self, *args, size_min=None, size_max=None, def_min=None, def_max=None, **kwargs):
+        msg = "Only one of ('size_min' and 'size_max') or ('def_min' and 'def_max') should be defined"
+        if size_min is not None and size_max is not None:
+            assert def_min is None and def_max is None, msg
+            super().__init__(*args, size_min=size_min, size_max=size_max, **kwargs)
+            self.true_size = BALL_DIAMETER
+        elif def_min is not None and def_max is not None:
+            assert size_min is None and size_max is None, msg
+            super().__init__(*args, size_min=def_min, size_max=def_max, **kwargs)
+            self.true_size = 100
+
+    def _get_current_parameters(self, view_key, view):
+        keypoints = view.calib.project_3D_to_2D(view.ball)
+        size = float(view.calib.compute_length2D(self.true_size, view.ball))
+        input_shape = view.calib.width, view.calib.height
+        return keypoints, size, input_shape
+
+
 
 def compute_point3D(calib: Calib, point2D: Point2D, pixel_size: float, true_size: float):
     center = Point2D(calib.Kinv@calib.rectify(point2D).H)             # center expressed in camera coordinates system
