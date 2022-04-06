@@ -18,6 +18,7 @@ setup(
         "calib3d",
         "pandas",
         "deepsport-utilities",
+        "tensorflow",
         "experimentator @ git+https://github.com/gabriel-vanzandycke/experimentator@main",
         "tf_layers @ git+https://github.com/gabriel-vanzandycke/tf_layers@main",
         "icnet_tf2 @ git+https://github.com/gabriel-vanzandycke/icnet_tf2@master",
