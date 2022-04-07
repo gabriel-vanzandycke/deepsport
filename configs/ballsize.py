@@ -25,7 +25,7 @@ output_shape = (side_length, side_length)
 dataset_name = "ball_views.pickle"
 size_min = 14
 size_max = 45
-max_shift = 10
+max_shift = 0
 transforms = [
     tasks.ballsize.BallRandomCropperTransform(
         output_shape=output_shape,
