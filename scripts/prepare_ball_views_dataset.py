@@ -21,8 +21,8 @@ dataset_config = {
 database_file = os.path.join(args.dataset_folder, "basketball-instants-dataset.json")
 ds = import_dataset(InstantsDataset, database_file, **dataset_config)
 
-# build a dataset of balls centered in the image with a margin of 100cm around the ball
-ds = ViewsDataset(ds, BuildBallViews(margin=100))
+# build a dataset of balls centered in the image with a margin of 100px around the ball
+ds = ViewsDataset(ds, BuildBallViews(margin=100, margin_in_pixels=True))
 
 # Add the 'ball' attribute to the views, a shortcut to the ball in the annotation list
 ds = TransformedDataset(ds, [AddBallAnnotation()])
