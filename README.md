@@ -19,7 +19,45 @@ Setup your environment by copying `.env.template` to `.env` and set:
 - `DATA_PATH` to the list of folders to find datasets or configuration files, ordered by lookup priority.
 - `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
 
-# Dataset
+# Tasks
+
+## Ball size estimation
+The basline uses a pre-processed dataset built from the `basketball-instants-dataset` with the following script:
+```bash
+python deepsport/scripts/prepare_ball_views_dataset.py --dataset-folder basketball-instants-dataset
+```
+
+The file generated (`basketball-instants-dataset/ball_views.pickle`) is an `mlworkflow.PickledDataset` whose items have the following attributes:
+- `image`: a `numpy.ndarray` RGB image thumbnail centered on the ball.
+- `calib`: a [`calib3d.Calib`](https://ispgroupucl.github.io/calib3d/calib3d/calib.html#implementation) object describing the calibration data associated to `image` using the [Keemotion convention](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/calibration.md#working-with-calibrated-images-captured-by-the-keemotion-system).
+- `ball` : a [`BallAnnotation`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/instants_dataset.py#L264) object with attributes:
+  - `center`: the ball 3D position as a [`calib3d.Point3D`](https://ispgroupucl.github.io/calib3d/calib3d/points.html) object (use `calib.project_3D_to_2D(ball.center)` to retrieve pixel coordinates).
+  - `visible`: a flag telling if ball is visible.
+
+You can visualize this dataset the following way:
+```python
+from mlworkflow import PickledDataset
+from matplotlib import pyplot as plt
+ds = PickledDataset("basketball-instants-dataset/ball_views.pickle")
+for key in ds.keys:
+    item = ds.query_item(key)
+    plt.imshow(item.image)
+    plt.title("ball size: {:.1f}".format(item.calib.compute_length2D(23, item.ball.center)[0]))
+    plt.show()
+    break # avoid looping through all dataset
+```
+
+### Dataset splits
+
+The `deepsport` repository uses the split defined by [`DeepSportDatasetSplitter`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/dataset_splitters.py#L6) which
+1. Uses images from `KS-FR-CAEN`, `KS-FR-LIMOGES` and `KS-FR-ROANNE` arenas for the **testing-set**.
+2. Randomly samples 15% of the remaining images for the **validation-set**
+3. Uses the remaining images for the **training-set**.
+
+The **testing-set** should be used to evaluate your model, both on the public EvalAI leaderboard that provides the temporary ranking, and when communicating about your method.
+
+The **challenge-set** will be shared later, without the labels, and will be used for the official ranking. You are free to use the three sets defined above to build the final model on which your method will be evaluated in the EvalAI submission.
+
 
 
 
