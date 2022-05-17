@@ -2,11 +2,12 @@ from functools import cached_property
 
 import tensorflow as tf
 
-from experimentator import ChunkProcessor
+from experimentator import ChunkProcessor, ExperimentMode
 from tf_layers import GammaColorAugmentation
 
 
 class GammaAugmentation(ChunkProcessor):
+    mode = ExperimentMode.TRAIN
     def __init__(self, tensor_name):
         """ Performs Gama Data-Augmentation on `tensor_name`.
             One single name is allowed because the same random augmentation should be applied to dependant items.
