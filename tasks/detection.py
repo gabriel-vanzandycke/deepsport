@@ -125,6 +125,7 @@ class AuC(Callback):
 
 
 class ComputeKeypointsDetectionHitmap(ChunkProcessor):
+    mode = ExperimentMode.EVAL
     def __init__(self, non_max_suppression_pool_size=50, threshold=np.linspace(0,1,51)):
         if isinstance(threshold, np.ndarray):
             thresholds = threshold
@@ -147,6 +148,7 @@ class ComputeKeypointsDetectionHitmap(ChunkProcessor):
         chunk["batch_hitmap"] = self.peak_local_max(self.avoid_local_eq(chunk["batch_heatmap"])) # B,H,W,C,T [bool]
 
 class ComputeKeypointsDetectionMetrics(ChunkProcessor):
+    mode = ExperimentMode.EVAL
     def __init__(self):
         self.compute_metric = ComputeElementaryMetrics()
 
@@ -161,10 +163,12 @@ class ComputeKeypointsDetectionMetrics(ChunkProcessor):
         chunk["FN"] = batch_metric["batch_FN"]
 
 class ConfidenceHitmap(ChunkProcessor):
+    mode = ExperimentMode.EVAL
     def __call__(self, chunk):
         chunk["batch_confidence_hitmap"] = tf.cast(chunk["batch_hitmap"], tf.float32)*chunk["batch_heatmap"][..., tf.newaxis]
 
 class ComputeTopK(ChunkProcessor):
+    mode = ExperimentMode.EVAL
     def __init__(self, k):
         """ From a `confidence_hitmap` tensor where peaks are identified with non-zero pixels whose
             value correspnod to the peaks intensity, compute the `topk_indices` holding (x,y) positions
@@ -191,6 +195,7 @@ class ComputeTopK(ChunkProcessor):
         chunk["topk_indices"] = tf.stack(((topk_indices // W), (topk_indices % W)), -1) # B, C, K, D
         
 class ComputeKeypointsTopKDetectionMetrics(ChunkProcessor):
+    mode = ExperimentMode.EVAL
     def __call__(self, chunk):
         assert len(chunk["batch_target"].get_shape()) == 3 or chunk["batch_target"].get_shape()[3] == 1, \
             "Only one keypoint type is allowed. If 'batch_target' is one_hot encoded, it needs to be compressed before."

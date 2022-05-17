@@ -7,6 +7,7 @@ import numpy as np
 
 from calib3d import Calib, Point3D, Point2D
 from deepsport_utilities.ds.instants_dataset.views_transforms import ViewRandomCropperTransform
+from deepsport_utilities.transforms import Transform
 from experimentator.tf2_chunk_processors import ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator import Callback, ExperimentMode
@@ -139,11 +140,13 @@ class NamedOutputs(ChunkProcessor):
         chunk["predicted_is_ball"] = chunk["batch_logits"][...,1]
 
 class ClassificationLoss(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __call__(self, chunk):
         chunk["target_is_ball"] = tf.where(tf.math.is_nan(chunk["batch_ball_size"]), 0, 1)
         chunk["classification_loss"] = tf.keras.losses.binary_crossentropy(chunk["target_is_ball"], chunk["predicted_is_ball"], from_logits=True)
 
 class RegressionLoss(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __init__(self, delta=1.0):
         self.delta = delta # required to print config
         self.loss = tf.keras.losses.Huber(delta=delta, name='huber_loss')
