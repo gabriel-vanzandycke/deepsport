@@ -5,7 +5,10 @@ from mlworkflow import PickledDataset, FilteredDataset, TransformedDataset
 from deepsport_utilities import import_dataset
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, DownloadFlags, ViewsDataset, BuildBallViews, AddBallAnnotation
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(description="""
+Creates an mlworkflow.PickledDataset file named "ball_views.pickle" containing pairs of ViewKey, View objects of balls centered
+on a 100x100 pixels image. The View objects contain image calibration data and ball annotation in 3D coordinates.
+""")
 parser.add_argument("--dataset-folder", help="Basketball Instants Dataset folder")
 parser.add_argument("--output-folder", default=None, help="Folder in which specific dataset will be created. Defaults to `dataset_folder` given in arguments.")
 args = parser.parse_args()
@@ -21,8 +24,8 @@ dataset_config = {
 database_file = os.path.join(args.dataset_folder, "basketball-instants-dataset.json")
 ds = import_dataset(InstantsDataset, database_file, **dataset_config)
 
-# build a dataset of balls centered in the image with a margin of 100px around the ball
-ds = ViewsDataset(ds, BuildBallViews(margin=100, margin_in_pixels=True))
+# build a dataset of balls centered in the image with a margin of 100px around the ball, filling image with 0 if needed.
+ds = ViewsDataset(ds, BuildBallViews(margin=100, margin_in_pixels=True, padding=100))
 
 # Add the 'ball' attribute to the views, a shortcut to the ball in the annotation list
 ds = TransformedDataset(ds, [AddBallAnnotation()])
