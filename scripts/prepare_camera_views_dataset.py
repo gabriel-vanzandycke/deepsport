@@ -5,8 +5,11 @@ from mlworkflow import PickledDataset, FilteredDataset, TransformedDataset
 from deepsport_utilities import import_dataset
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, DownloadFlags, ViewsDataset, BuildCameraViews, AddBallAnnotation
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--dataset-folder", help="Basketball Instants Dataset folder")
+parser = argparse.ArgumentParser(description="""
+Creates an mlworkflow.PickledDataset file named "camera_with_ball_visible_views.pickle" containing pairs of ViewKey, View objects.
+The View objects contain full image (with calibration data) as captured by the Keemotion system.
+""")
+parser.add_argument("--dataset-folder", required=True, help="Basketball Instants Dataset folder")
 parser.add_argument("--output-folder", default=None, help="Folder in which specific dataset will be created. Defaults to `dataset_folder` given in arguments.")
 args = parser.parse_args()
 
