@@ -20,7 +20,7 @@ experiment_type = [
 output_shape = (640, 640)
 
 # DeepSport Dataset
-dataset_name = "/DATA/datasets/gva/deepsport-camera-views-dataset.pickle"
+dataset_name = "camera_with_ball_visible_views.pickle"
 size_min = 14
 size_max = 37
 transforms = [
