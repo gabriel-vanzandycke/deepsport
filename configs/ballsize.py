@@ -54,6 +54,7 @@ callbacks = [
     experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
     tasks.ballsize.ComputeDiameterError(),
     tasks.ballsize.ComputeDetectionMetrics(),
+    tasks.ballsize.PrintMetricsCallback(['training_MADE', 'validation_MADE']),
 ]
 
 alpha = 0.5

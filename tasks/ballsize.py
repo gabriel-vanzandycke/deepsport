@@ -63,6 +63,14 @@ def compute_relative_error(calib: Calib, point3D: Point3D, pixel_size: float):
     return num/den
 
 @dataclass
+class PrintMetricsCallback(Callback):
+    after = ["ComputeDiameterError"]
+    when = ExperimentMode.EVAL
+    metrics: list
+    def on_epoch_end(self, **state):
+        print(", ".join([f"{metric}={state[metric]}" for metric in self.metrics]))
+
+@dataclass
 class ComputeDiameterError(Callback):
     before = ["GatherCycleMetrics"]
     when = ExperimentMode.EVAL
