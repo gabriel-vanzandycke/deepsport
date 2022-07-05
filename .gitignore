@@ -3,3 +3,4 @@ __pycache__
 *.egg-info
 *.ipynb_checkpoints
 results/
+basketball-instants-dataset
