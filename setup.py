@@ -17,7 +17,7 @@ setup(
         "numpy",
         "calib3d",
         "pandas",
-        "deepsport-utilities>=4.2",
+        "deepsport-utilities>=4.2.1",
         "tensorflow",
         "python-dotenv",
         "experimentator @ git+https://github.com/gabriel-vanzandycke/experimentator@main",
