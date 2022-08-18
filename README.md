@@ -54,18 +54,12 @@ The `deepsport` repository uses the split defined by [`DeepSportDatasetSplitter`
 2. Randomly samples 15% of the remaining images for the **validation-set**
 3. Uses the remaining images for the **training-set**.
 
-The **testing-set** should be used to evaluate your model, both on the public EvalAI leaderboard that provides the temporary ranking, and when communicating about your method.
-
-The **challenge-set** will be shared later, without the labels, and will be used for the official ranking. You are free to use the three sets defined above to build the final model on which your method will be evaluated in the EvalAI submission.
-
-
+The **testing-set** should not be used except to evaluate your model and when communicating about your method.
 
 
 # Training
+You can launch a new training by running the following command. Be sure the command is ran from the project root folder or add it to your `DATA_PATH` environment.
 ```
 python -m experimentator configs/ballsize.py --epochs 101 --kwargs "eval_epochs=range(0,101,20)"
 ```
 
-
-# Evaluation
-comming soon
