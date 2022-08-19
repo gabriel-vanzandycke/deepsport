@@ -1,6 +1,6 @@
 This repository holds the task specific software made public for my PhD under the DeepSport project funded by the Walloon Region of Belgium, Keemotion and SportRadar.
 It goes along with several open-source libraries that I developed during that time:
- - [calib3d](https://github.com/gabriel-vanzandycke/calib3d): a library to ease computations in 2D and 3D homogenous coordinates and projective geometry with camera calibration.
+ - [calib3d](https://github.com/ispgroupucl/calib3d): a library to ease computations in 2D and 3D homogenous coordinates and projective geometry with camera calibration.
  - [aleatorpy](https://github.com/gabriel-vanzandycke/pseudo_random): a library to control randomness in ML experiments.
  - [experimentator](https://github.com/gabriel-vanzandycke/experimentator): a library to run DL experiments.
  - [pyconfyg](https://github.com/gabriel-vanzandycke/pyconfyg): a library to describe configuration file with python.
