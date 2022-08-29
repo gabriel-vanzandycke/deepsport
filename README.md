@@ -22,7 +22,7 @@ Setup your environment by copying `.env.template` to `.env` and set:
 # Tasks
 
 ## Ball size estimation
-The basline uses a pre-processed dataset built from the `basketball-instants-dataset` with the following script:
+This task uses a pre-processed dataset built from the `basketball-instants-dataset` with the following script:
 ```bash
 python deepsport/scripts/prepare_ball_views_dataset.py --dataset-folder basketball-instants-dataset
 ```
@@ -49,15 +49,12 @@ for key in ds.keys:
 
 ### Dataset splits
 
-The `deepsport` repository uses the split defined by [`DeepSportDatasetSplitter`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/dataset_splitters.py#L6) which
+This repository uses the split defined by [`DeepSportDatasetSplitter`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/dataset_splitters.py#L6) which
 1. Uses images from `KS-FR-CAEN`, `KS-FR-LIMOGES` and `KS-FR-ROANNE` arenas for the **testing-set**.
 2. Randomly samples 15% of the remaining images for the **validation-set**
 3. Uses the remaining images for the **training-set**.
 
-The **testing-set** should be used to evaluate your model, both on the public EvalAI leaderboard that provides the temporary ranking, and when communicating about your method.
-
-The **challenge-set** will be shared later, without the labels, and will be used for the official ranking. You are free to use the three sets defined above to build the final model on which your method will be evaluated in the EvalAI submission.
-
+The **testing-set** should only be used to evaluate your model.
 
 
 
