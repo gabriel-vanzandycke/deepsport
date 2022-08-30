@@ -1,7 +1,10 @@
+import numpy as np
 import tensorflow as tf
 import mlworkflow as mlwf
 import experimentator
+import experimentator.wandb_experiment
 from experimentator.utils import find
+
 import experimentator.tf2_experiment
 import experimentator.tf2_chunk_processors
 import deepsport_utilities.ds.instants_dataset
@@ -19,10 +22,14 @@ experiment_type = [
 # Dataset parameters
 output_shape = (640, 640)
 
+
+with_diff = True
+
 # DeepSport Dataset
-dataset_name = "camera_with_ball_visible_views.pickle"
-size_min = 14
-size_max = 37
+#dataset_name = "camera_with_ball_visible_views.pickle"
+dataset_name = "gva/camera_with_ball_visible_views.pickle"
+size_min = 11
+size_max = 28
 transforms = [
     deepsport_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
         output_shape=output_shape,
@@ -31,11 +38,13 @@ transforms = [
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddDiffFactory() if with_diff else None,
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
     )
 ]
 
-dataset_splitter = deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
+#dataset_splitter = deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
+dataset_splitter = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(validation_pc=0, testing_arena_labels=['KS-FR-GRAVELINES', 'KS-FR-STRASBOURG'])
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
 subsets = dataset_splitter(dataset)
 
@@ -54,14 +63,17 @@ callbacks = [
     experimentator.SaveLearningRate(),
     experimentator.GatherCycleMetrics(),
     experimentator.LogStateDataCollector(),
+    experimentator.wandb_experiment.LogStateWandB(criterion_metric="validation_top1-AuC"),
     experimentator.LearningRateDecay(start=decay_start, duration=10, factor=0.1),
 ]
 
 globals().update(locals()) # required to use 'tf' in lambdas
 chunk_processors = [
-    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_target"]),
+    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_input_image2", "batch_target"]),
+    lambda chunk: chunk.update({'batch_input_diff': tf.subtract(chunk["batch_input_image"], chunk["batch_input_image2"])}),
     models.other.GammaAugmentation("batch_input_image"),
-    lambda chunk: chunk.update({'batch_input': chunk['batch_input_image']}),
+    #lambda chunk: chunk.update({'batch_input': chunk['batch_input_image']}),
+    lambda chunk: chunk.update({'batch_input': tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
     models.icnet.ICNetBackbone(),
     models.icnet.ICNetHead(num_classes=1),
@@ -70,7 +82,7 @@ chunk_processors = [
     tasks.detection.ComputeKeypointsDetectionHitmap(non_max_suppression_pool_size=int(size_max*1.1)),
     tasks.detection.ConfidenceHitmap(),
     tasks.detection.ComputeTopK(k=k),
-    lambda chunk: chunk.update({"batch_target": tf.nn.max_pool2d(chunk["batch_target"][..., tf.newaxis], int(size_min/2), strides=1, padding='SAME')}), # enlarge target
+    tasks.detection.EnlargeTarget(int(size_min/2)),
     tasks.detection.ComputeKeypointsTopKDetectionMetrics()
 ]
 

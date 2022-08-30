@@ -213,5 +213,7 @@ class ComputeKeypointsTopKDetectionMetrics(ChunkProcessor):
 
 class EnlargeTarget(ChunkProcessor):
     mode = ExperimentMode.EVAL
+    def __init__(self, pool_size):
+        self.pool_size = pool_size
     def __call__(self, chunk):
-        chunk["batch_target"] = tf.nn.max_pool2d(chunk["batch_target"][..., tf.newaxis], int(size_min/2), strides=1, padding='SAME')
+        chunk["batch_target"] = tf.nn.max_pool2d(chunk["batch_target"][..., tf.newaxis], self.pool_size, strides=1, padding='SAME')
