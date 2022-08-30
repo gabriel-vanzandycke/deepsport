@@ -35,3 +35,15 @@ class LeNetHead(ChunkProcessor):
         ])
     def __call__(self, chunk):
         chunk["batch_logits"] = self.model(chunk["batch_logits"])
+
+class CropBlockDividable(ChunkProcessor):
+    def __init__(self, tensor_names, block_size=16):
+        self.tensor_names = tensor_names
+        self.block_size = block_size
+    def __call__(self, chunk):
+        for name in chunk:
+            if name in self.tensor_names:
+                height, width = tf.shape(chunk[name])[1:3]
+                w = width//self.block_size*self.block_size
+                h = height//self.block_size*self.block_size
+                chunk[name] = chunk[name][:,:h,0:w]
