@@ -27,8 +27,8 @@ class BallSizeFromBallSegExperiment(TensorflowExperiment):
     batch_outputs_names = ["predicted_diameter", "predicted_is_ball"]
     def save_weights(self, filename):
         self.train_model.get_layer('ballsize').save_weights(filename)
-    def load_weights(self, filename):
-        super().load_weights(filename) # sets the `self.weights_file` variable
+    def load_weights(self, *args, **kwargs):
+        super().load_weights(*args, **kwargs) # sets the `self.weights_file` variable
         self.train_model.get_layer('ballsize').load_weights(self.weights_file)
         self.weights_file = None
 
