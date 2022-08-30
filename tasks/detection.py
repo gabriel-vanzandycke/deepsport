@@ -128,7 +128,7 @@ class AuC(Callback):
 
 
 class ComputeKeypointsDetectionHitmap(ChunkProcessor):
-    mode = ExperimentMode.EVAL
+    mode = ExperimentMode.EVAL | ExperimentMode.INFER
     def __init__(self, non_max_suppression_pool_size=50, threshold=DEFAULT_THRESHOLDS):
         if isinstance(threshold, np.ndarray):
             thresholds = threshold
@@ -166,12 +166,12 @@ class ComputeKeypointsDetectionMetrics(ChunkProcessor):
         chunk["FN"] = batch_metric["batch_FN"]
 
 class ConfidenceHitmap(ChunkProcessor):
-    mode = ExperimentMode.EVAL
+    mode = ExperimentMode.EVAL | ExperimentMode.INFER
     def __call__(self, chunk):
         chunk["batch_confidence_hitmap"] = tf.cast(chunk["batch_hitmap"], tf.float32)*chunk["batch_heatmap"][..., tf.newaxis]
 
 class ComputeTopK(ChunkProcessor):
-    mode = ExperimentMode.EVAL
+    mode = ExperimentMode.EVAL | ExperimentMode.INFER
     def __init__(self, k):
         """ From a `confidence_hitmap` tensor where peaks are identified with non-zero pixels whose
             value correspnod to the peaks intensity, compute the `topk_indices` holding (x,y) positions
@@ -211,3 +211,7 @@ class ComputeKeypointsTopKDetectionMetrics(ChunkProcessor):
         chunk["topk_TP"] = tf.cast(tf.cast(tf.math.cumsum(chunk["topk_targets"], axis=-1), tf.bool), tf.int32)
         chunk["topk_FP"] = tf.cast(tf.cast(chunk["topk_outputs"], tf.bool), tf.int32)-chunk["topk_targets"]
 
+class EnlargeTarget(ChunkProcessor):
+    mode = ExperimentMode.EVAL
+    def __call__(self, chunk):
+        chunk["batch_target"] = tf.nn.max_pool2d(chunk["batch_target"][..., tf.newaxis], int(size_min/2), strides=1, padding='SAME')
