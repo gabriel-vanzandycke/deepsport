@@ -10,8 +10,11 @@ from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetri
 from experimentator import Callback, ChunkProcessor, ExperimentMode
 from experimentator.tf2_experiment import TensorflowExperiment
 
+
+DEFAULT_THRESHOLDS = np.linspace(0,1,51) # Detection thresholds on a detection map between 0 and 1.
+
 class HeatmapDetectionExperiment(TensorflowExperiment):
-    batch_inputs_names = ["batch_target", "batch_input_image"]
+    batch_inputs_names = ["batch_target", "batch_input_image", "batch_input_image2"]
     @cached_property
     def metrics(self):
         metrics = ["TP", "FP", "TN", "FN", "topk_TP", "topk_FP", "P", "N"]
@@ -33,7 +36,7 @@ def divide(num: np.ndarray, den: np.ndarray):
 class ComputeMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
-    thresholds: (int, np.ndarray, list, tuple) = np.linspace(0,1,51)
+    thresholds: (int, np.ndarray, list, tuple) = DEFAULT_THRESHOLDS
     class_index: int = 0
     def on_cycle_begin(self, **_):
         self.acc = {}
@@ -67,7 +70,7 @@ class ComputeTopkMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
     k: (tuple, list, np.ndarray)
-    thresholds: (int, np.ndarray, list, tuple) = np.linspace(0,1,51)
+    thresholds: (int, np.ndarray, list, tuple) = DEFAULT_THRESHOLDS
     class_index: int = 0
     def on_cycle_begin(self, **_):
         self.acc = {}
@@ -126,7 +129,7 @@ class AuC(Callback):
 
 class ComputeKeypointsDetectionHitmap(ChunkProcessor):
     mode = ExperimentMode.EVAL
-    def __init__(self, non_max_suppression_pool_size=50, threshold=np.linspace(0,1,51)):
+    def __init__(self, non_max_suppression_pool_size=50, threshold=DEFAULT_THRESHOLDS):
         if isinstance(threshold, np.ndarray):
             thresholds = threshold
         elif isinstance(threshold, list):
