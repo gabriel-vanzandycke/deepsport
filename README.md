@@ -19,15 +19,48 @@ Setup your environment by copying `.env.template` to `.env` and set:
 - `DATA_PATH` to the list of folders to find datasets or configuration files, ordered by lookup priority.
 - `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
 
-# Tasks
+# Basketball-Instants-Dataset
 
-## Ball size estimation
-This task uses a pre-processed dataset built from the `basketball-instants-dataset` with the following script:
+This repository uses the [Basketball-Instants-Dataset](https://www.kaggle.com/datasets/deepsportradar/basketball-instants-dataset), a dataset of raw images captured at the same instant from the Keemotion production system.
+
+The dataset can be downloaded and unzipped manually in the `basketball-instants-dataset/` folder of the project. To do it programmatically, you need the kaggle CLI:
+
 ```bash
-python deepsport/scripts/prepare_ball_views_dataset.py --dataset-folder basketball-instants-dataset
+pip install kaggle
 ```
 
-The file generated (`basketball-instants-dataset/ball_views.pickle`) is an `mlworkflow.PickledDataset` whose items have the following attributes:
+Go to your Kaggle Account settings page and click on `Create new API Token` to download the file to be saved as `~/.kaggle/kaggle.json` for authentication. Finally download and unzip the dataset with:
+
+```bash
+kaggle datasets download deepsportradar/basketball-instants-dataset
+unzip -qo ./basketball-instants-dataset.zip -d basketball-instants-dataset
+```
+
+# Tasks
+
+Each task is defined by a configuration file in the `configs` folder, along with several utility functions defined in the `models` and `tasks` folders.
+In addition, it uses a pre-processed dataset in the form of a `mlworkflow.PickledDataset` that requires to be pre-computed and stored in the `basketball-instants-dataset` folder.
+
+## BallSeg: ball detection with a segmentation approach
+This tasks addresses ball detection in basketball scenes. The pre-processed dataset can be built with the `deepsport/scripts/prepare_camera_views_dataset.py` script. Its items have the following attributes:
+- `image`: a `numpy.ndarray` RGB image with ball visible somewhere.
+- `calib`: a [`calib3d.Calib`](https://ispgroupucl.github.io/calib3d/calib3d/calib.html#implementation) object describing the calibration data associated to `image` using the [Keemotion convention](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/calibration.md#working-with-calibrated-images-captured-by-the-keemotion-system).
+- `ball` : a [`BallAnnotation`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/instants_dataset.py#L264) object with attributes:
+  - `center`: the ball 3D position as a [`calib3d.Point3D`](https://ispgroupucl.github.io/calib3d/calib3d/points.html) object (use `calib.project_3D_to_2D(ball.center)` to retrieve pixel coordinates).
+  - `visible`: a flag telling if ball is visible (always `True` in this file)
+
+The configuration file is `configs/ballseg.py` and the model can be trained by running the following command from the project root folder.
+```bash
+python -m experimentator configs/ballseg.py --epochs 101 --kwargs "eval_epochs=range(0,101,20)"
+```
+
+
+## Ball size estimation
+
+This tasks addresses ball 3D localization from a single calibrated image.
+
+### Dataset
+The pre-processed dataset can be built with the `deepsport/scripts/prepare_ball_views_dataset.py` script. Its items have the following attributes:
 - `image`: a `numpy.ndarray` RGB image thumbnail centered on the ball.
 - `calib`: a [`calib3d.Calib`](https://ispgroupucl.github.io/calib3d/calib3d/calib.html#implementation) object describing the calibration data associated to `image` using the [Keemotion convention](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/calibration.md#working-with-calibrated-images-captured-by-the-keemotion-system).
 - `ball` : a [`BallAnnotation`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/instants_dataset.py#L264) object with attributes:
@@ -49,7 +82,7 @@ for key in ds.keys:
 
 ### Dataset splits
 
-This repository uses the split defined by [`DeepSportDatasetSplitter`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/dataset_splitters.py#L6) which
+This task uses the split defined by [`DeepSportDatasetSplitter`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/dataset_splitters.py#L6) which
 1. Uses images from `KS-FR-CAEN`, `KS-FR-LIMOGES` and `KS-FR-ROANNE` arenas for the **testing-set**.
 2. Randomly samples 15% of the remaining images for the **validation-set**
 3. Uses the remaining images for the **training-set**.
@@ -57,7 +90,7 @@ This repository uses the split defined by [`DeepSportDatasetSplitter`](https://g
 The **testing-set** should not be used except to evaluate your model and when communicating about your method.
 
 
-# Training
+### Training
 You can launch a new training by running the following command. Be sure the command is ran from the project root folder or add it to your `DATA_PATH` environment.
 ```
 python -m experimentator configs/ballsize.py --epochs 101 --kwargs "eval_epochs=range(0,101,20)"

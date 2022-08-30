@@ -31,7 +31,7 @@ size_min = 11
 size_max = 28
 
 # DeepSport Dataset
-dataset_name = "gva/camera_with_ball_visible_views.pickle"
+dataset_name = "camera_with_ball_visible_views.pickle"
 transforms = [
     deepsport_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
         output_shape=output_shape,
