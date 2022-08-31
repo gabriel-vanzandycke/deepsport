@@ -226,6 +226,7 @@ class CompositeFieldFused(ChunkProcessor):
         chunk["scales"]     = tf.exp(chunk["scales_logits"])
 
 class CompositeLoss(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __init__(self, lambdas=None):
         self.lambdas = lambdas or [1,1,1]
         self.confidence_loss = ConfidenceLoss()
@@ -238,7 +239,7 @@ class CompositeLoss(ChunkProcessor):
         chunk["scale_loss"] = self.scale_loss(output_scales=chunk["scales_logits"], target_scales=chunk["batch_scales_target"], mask=target_confidence)
         chunk["loss"] = self.lambdas[0]*chunk["confidence_loss"] + self.lambdas[1]*chunk["localization_loss"] + self.lambdas[2]*chunk["scale_loss"]
 
-class ConfidenceLoss(ChunkProcessor):
+class ConfidenceLoss:
     r"""
         $$ w = \right\{
             \begin{align}
@@ -276,7 +277,7 @@ class ConfidenceLoss(ChunkProcessor):
         loss = tf.reduce_mean(loss, axis=0)/self.division_factor
         return loss
 
-class LocalizationLoss():
+class LocalizationLoss:
     def __init__(self, weight=None, norm_low_clip=None, division_factor=100.0, logb_constraint="tanh"):
         self.weight = weight
         self.norm_low_clip = norm_low_clip
@@ -327,7 +328,7 @@ class LocalizationLoss():
         loss = tf.reduce_sum(loss)/batch_size
         return loss/self.division_factor
 
-class ScaleLoss():
+class ScaleLoss:
     def __init__(self, clip_by_value=None, division_factor=100.0):
         self.division_factor = division_factor
         self.clip_by_value = clip_by_value # [0.0, 5.0] in some version of PIFPAF code
@@ -347,7 +348,7 @@ class ScaleLoss():
         return loss/self.division_factor
 
 class DecodePif(ChunkProcessor):
-    mode = ExperimentMode.EVAL
+    mode = ExperimentMode.EVAL | ExperimentMode.INFER
     def __init__(self, stride, neighbours=DEFAULT_NEIGHBOURS, max_value=1.0, **kwargs):
         self.stride = stride
         self.max_value = max_value
