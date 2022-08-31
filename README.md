@@ -19,7 +19,11 @@ Setup your environment by copying `.env.template` to `.env` and set:
 - `DATA_PATH` to the list of folders to find datasets or configuration files, ordered by lookup priority.
 - `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
 
-# Basketball-Instants-Dataset
+# Datasets
+
+The different tasks rely on datasets to train and evaluate models.
+
+## Basketball-Instants-Dataset
 
 This repository uses the [Basketball-Instants-Dataset](https://www.kaggle.com/datasets/deepsportradar/basketball-instants-dataset), a dataset of raw images captured at the same instant from the Keemotion production system.
 
@@ -38,8 +42,13 @@ unzip -qo ./basketball-instants-dataset.zip -d basketball-instants-dataset
 
 # Tasks
 
-Each task is defined by a configuration file in the `configs` folder, along with several utility functions defined in the `models` and `tasks` folders.
-In addition, it uses a pre-processed dataset in the form of a `mlworkflow.PickledDataset` that requires to be pre-computed and stored in the `basketball-instants-dataset` folder.
+The tasks are defined by a configuration file (located in the `configs` folder) that uses several functions and objects defined in the `models` and `tasks` folders.
+Each task relies on a pre-processed dataset in the form of an `mlworkflow.PickledDataset` that must be computed and stored in the `basketball-instants-dataset` folder.
+
+The models can be trained by running the following command from the project root folder (or by adding the project root folder to the `DATA_PATH` environment variable):
+```bash
+python -m experimentator configs/<config-file> --epochs <numper-of-epochs>
+```
 
 ## BallSeg: ball detection with a segmentation approach
 This tasks addresses ball detection in basketball scenes. The pre-processed dataset can be built with the `deepsport/scripts/prepare_camera_views_dataset.py` script. Its items have the following attributes:
@@ -57,10 +66,7 @@ python -m experimentator configs/ballseg.py --epochs 101 --kwargs "eval_epochs=r
 
 ## Ball size estimation
 
-This tasks addresses ball 3D localization from a single calibrated image.
-
-### Dataset
-The pre-processed dataset can be built with the `deepsport/scripts/prepare_ball_views_dataset.py` script. Its items have the following attributes:
+This tasks addresses ball 3D localization from a single calibrated image. The pre-processed dataset can be built with the `deepsport/scripts/prepare_ball_views_dataset.py` script. Its items have the following attributes:
 - `image`: a `numpy.ndarray` RGB image thumbnail centered on the ball.
 - `calib`: a [`calib3d.Calib`](https://ispgroupucl.github.io/calib3d/calib3d/calib.html#implementation) object describing the calibration data associated to `image` using the [Keemotion convention](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/calibration.md#working-with-calibrated-images-captured-by-the-keemotion-system).
 - `ball` : a [`BallAnnotation`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/instants_dataset.py#L264) object with attributes:
@@ -80,18 +86,15 @@ for key in ds.keys:
     break # avoid looping through all dataset
 ```
 
-### Dataset splits
 
 This task uses the split defined by [`DeepSportDatasetSplitter`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/dataset_splitters.py#L6) which
 1. Uses images from `KS-FR-CAEN`, `KS-FR-LIMOGES` and `KS-FR-ROANNE` arenas for the **testing-set**.
 2. Randomly samples 15% of the remaining images for the **validation-set**
 3. Uses the remaining images for the **training-set**.
-
 The **testing-set** should not be used except to evaluate your model and when communicating about your method.
 
 
-### Training
-You can launch a new training by running the following command. Be sure the command is ran from the project root folder or add it to your `DATA_PATH` environment.
+The configuration file is `configs/ballsize.py` and the model can be trained by running the following command.
 ```
 python -m experimentator configs/ballsize.py --epochs 101 --kwargs "eval_epochs=range(0,101,20)"
 ```
