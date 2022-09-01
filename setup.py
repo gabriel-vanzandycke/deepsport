@@ -9,7 +9,7 @@ setup(
     licence="LGPL",
     python_requires='>=3.8',
     description="Software made public for my PhD addressing ball detection and ball 3D localization",
-    version='1.0.0',
+    version='1.1.0',
     packages=find_packages(),
     install_requires=[
         "mlworkflow>=0.3.6",
