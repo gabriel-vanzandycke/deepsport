@@ -60,7 +60,6 @@ callbacks = [
     experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
 ]
 
-alpha = 0.5
 globals().update(locals()) # required to use locals() in lambdas
 chunk_processors = [
     experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image"]),

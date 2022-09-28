@@ -23,7 +23,7 @@ batch_size = 2
 output_shape = (640, 640)
 
 # DeepSport Dataset
-dataset_name = "/DATA/datasets/gva/deepsport-camera-views-dataset.pickle"
+dataset_name = "camera_with_ball_visible_views.pickle"
 size_min = 14
 size_max = 37
 on_ball = False
@@ -72,11 +72,12 @@ oracle = False
 side_length = 64
 
 ballseg_config = None
+ballsize_config = None
 globals().update(locals()) # required to use 'tf' in lambdas
 chunk_processors = [
     tasks.ballsize_from_ballseg.BallSegModel(config=ballseg_config, batch_size=batch_size, k=k, output_shape=output_shape),
     tasks.ballsize_from_ballseg.BallSegCandidates(side_length, oracle=oracle),
-    tasks.ballsize_from_ballseg.CNNModel(batch_size=batch_size*k, side_length=side_length)
+    tasks.ballsize_from_ballseg.CNNModel(config=ballsize_config, batch_size=batch_size*k, side_length=side_length)
 ]
 
 learning_rate = 1e-4
