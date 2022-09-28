@@ -96,12 +96,12 @@ class AddBallDetectionTransform(Transform):
 class BallCropperTransform(NaiveViewRandomCropperTransform):
     def _get_current_parameters(self, view_key, view):
         input_shape = view.calib.width, view.calib.height
-        keypoints = view.calib.project_3D_to_2D(view.annotations[0].center)
+        keypoints = view.calib.project_3D_to_2D(view.ball.center)
         return keypoints, 1, input_shape
 
 class AddBallStateFactory(Transform):
     def __call__(self, view_key, view):
         predicate = lambda a: a.camera == view_key.camera and a.type == "ball" and view.calib.projects_in(a.center) and a.visible is not False
         balls = [a for a in view.annotations if predicate(a)]
-        state_fct = lambda state: state if isinstance(state, BallState) else ball_states[state]
+        state_fct = lambda state: state if isinstance(state, int) else ball_states[state]
         return {"ball_state": state_fct(balls[0].state) if balls else BallState.NONE} # takes the first ball by convention
