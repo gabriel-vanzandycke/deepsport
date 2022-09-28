@@ -1,17 +1,48 @@
+from dataclasses import dataclass
 import json
 import os
 from typing import NamedTuple
 
 import numpy as np
+import pandas
+import tensorflow as tf
 
 from calib3d import Point2D
-from experimentator import build_experiment
+from experimentator import build_experiment, ExperimentMode, Callback
+from experimentator.tf2_experiment import TensorflowExperiment
+from experimentator.dataset import Subset, collate_fn
+from deepsport_utilities.ds.instants_dataset.views_transforms import NaiveViewRandomCropperTransform
 from deepsport_utilities.transforms import Transform
 from deepsport_utilities.utils import DefaultDict
+from dataset_utilities.ds.raw_sequences_dataset import BallState, ball_states
 
 from models.other import CropBlockDividable
-from tasks.detection import EnlargeTarget
+from tasks.detection import EnlargeTarget, divide
 
+
+class BallStateClassification(TensorflowExperiment):
+    batch_inputs_names = ["batch_ball_state", "batch_input_image"]
+    batch_metrics_names = ["batch_output", "batch_target"]
+    batch_outputs_names = ["batch_output"]
+
+    @staticmethod
+    def balanced_keys_generator(keys, get_class, classes, cache, query_item):
+        pending = {c: [] for c in classes}
+        for key in keys:
+            c = cache.get(key) or cache.setdefault(key, get_class(key, query_item(key)))
+            pending[c].append(key)
+            if all([len(l) > 0 for l in pending.values()]):
+                for c in classes:
+                    yield pending[c].pop(0)
+
+    class_cache = {}
+    def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
+        batch_size = batch_size or self.batch_size
+        classes = [BallState.FLYING, BallState.CONSTRAINT, BallState.DRIBBLING]
+        get_class = lambda k,v: v['ball_state']
+        keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
+        # yields pairs of (keys, data)
+        yield from subset.dataset.batches(keys=keys, batch_size=batch_size, collate_fn=collate_fn, *args, **kwargs)
 
 class BallDetection(NamedTuple):
     model: str
@@ -39,15 +70,8 @@ class Detector:
         outputs = np.array(result['topk_outputs'][:,0,0,0])
         stream_idx = np.argmax(outputs)
         point2D = Point2D(np.array(result['topk_indices'][stream_idx,0,0,0]))
-        point3D = instant.calibs[stream_idx].project_2D_to_3D(point2D, Z=0)
 
-        def best_camera(point3D, calibs):
-            projects = lambda p, calib: calib.projects_in(p)
-            distance = lambda x, width: np.min([x, width-x])
-            camera_idx = np.nanargmax([distance(calib.project_3D_to_2D(point3D).x, calib.width) if projects(point3D, calib) else np.nan for calib in calibs])
-            return camera_idx, calibs[camera_idx].project_3D_to_2D(point3D)
-
-        return BallDetection(self.model, *best_camera(point3D, instant.calibs), outputs[stream_idx])
+        return BallDetection(self.model, stream_idx, point2D, outputs[stream_idx])
 
 PIFBALL_THRESHOLD = 0.1
 BALLSEG_THRESHOLD = 0.8
@@ -68,3 +92,16 @@ class AddBallDetectionTransform(Transform):
         instant.ball2D = self.database[instant.arena_label, instant.game_id].get(str(instant.sequence_frame_index), None)
         return instant
 
+
+class BallCropperTransform(NaiveViewRandomCropperTransform):
+    def _get_current_parameters(self, view_key, view):
+        input_shape = view.calib.width, view.calib.height
+        keypoints = view.calib.project_3D_to_2D(view.annotations[0].center)
+        return keypoints, 1, input_shape
+
+class AddBallStateFactory(Transform):
+    def __call__(self, view_key, view):
+        predicate = lambda a: a.camera == view_key.camera and a.type == "ball" and view.calib.projects_in(a.center) and a.visible is not False
+        balls = [a for a in view.annotations if predicate(a)]
+        state_fct = lambda state: state if isinstance(state, BallState) else ball_states[state]
+        return {"ball_state": state_fct(balls[0].state) if balls else BallState.NONE} # takes the first ball by convention
