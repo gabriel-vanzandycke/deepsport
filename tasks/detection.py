@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from functools import cached_property
+import typing
 
 import numpy as np
 import pandas
@@ -36,7 +37,7 @@ def divide(num: np.ndarray, den: np.ndarray):
 class ComputeMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
-    thresholds: (int, np.ndarray, list, tuple) = DEFAULT_THRESHOLDS
+    thresholds: typing.Tuple[int, np.ndarray, list, tuple] = DEFAULT_THRESHOLDS
     class_index: int = 0
     def on_cycle_begin(self, **_):
         self.acc = {}
@@ -69,8 +70,8 @@ class ComputeTopkMetrics(Callback):
     """
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
-    k: (tuple, list, np.ndarray)
-    thresholds: (int, np.ndarray, list, tuple) = DEFAULT_THRESHOLDS
+    k: typing.Tuple[tuple, list, np.ndarray]
+    thresholds: typing.Tuple[int, np.ndarray, list, tuple] = DEFAULT_THRESHOLDS
     class_index: int = 0
     def on_cycle_begin(self, **_):
         self.acc = {}
@@ -196,7 +197,7 @@ class ComputeTopK(ChunkProcessor):
 
         chunk["topk_outputs"] = topk_values # B, C, K
         chunk["topk_indices"] = tf.stack(((topk_indices // W), (topk_indices % W)), -1) # B, C, K, D
-        
+
 class ComputeKeypointsTopKDetectionMetrics(ChunkProcessor):
     mode = ExperimentMode.EVAL
     def __call__(self, chunk):
