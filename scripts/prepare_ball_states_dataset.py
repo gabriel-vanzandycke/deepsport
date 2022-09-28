@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 
 from calib3d import Point2D
 from dataset_utilities.ds.raw_sequences_dataset import RawSequencesDataset, InstantsDataset, AddBallStatesTransform, BallState
-from deepsport_utilities.ds.instants_dataset import ViewsDataset, BuildBallViews, BallAnnotation
+from deepsport_utilities.ds.instants_dataset import ViewsDataset, BuildBallViews, BallAnnotation, AddBallAnnotation
 from mlworkflow import TransformedDataset, FilteredDataset, PickledDataset
 
 from tasks.ballstate import AddBallDetectionTransform
@@ -18,9 +18,8 @@ from tasks.ballstate import AddBallDetectionTransform
 load_dotenv("/home/gva/repositories/deepsport/.env")
 
 parser = argparse.ArgumentParser(description="""""")
-parser.add_argument("output-folder")
+parser.add_argument("output_folder")
 args = parser.parse_args()
-
 
 local_storage = "/DATA/datasets"
 dummy = boto3.Session()
@@ -39,5 +38,6 @@ ids = TransformedDataset(ids, [AddBallDetectionTransform()])
 ids = FilteredDataset(ids, lambda k,v: v.ball2D is not None and v.ball_state is not BallState.NONE)
 ids = TransformedDataset(ids, [convert_ball_format])
 vds = ViewsDataset(ids, view_builder=BuildBallViews(margin=128, margin_in_pixels=True))
+vds = TransformedDataset(vds, [AddBallAnnotation()])
 
 PickledDataset.create(vds, os.path.join(args.output_folder, "ball_states_dataset.pickle"), yield_keys_wrapper=tqdm)
