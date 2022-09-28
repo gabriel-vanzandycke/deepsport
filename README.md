@@ -42,31 +42,44 @@ unzip -qo ./basketball-instants-dataset.zip -d basketball-instants-dataset
 
 # Tasks
 
-The tasks are defined by a configuration file (located in the `configs` folder) that uses several functions and objects defined in the `models` and `tasks` folders.
-Each task relies on a pre-processed dataset in the form of an `mlworkflow.PickledDataset` that must be computed and stored in the `basketball-instants-dataset` folder.
+The tasks are determined by a configuration file (located in the `configs` folder) that uses several functions and objects defined in the `models` and `tasks` folders. The tasks rely on a pre-processed dataset that needs to be computed and stored in your `DATA_PATH`.
 
 The models can be trained by running the following command from the project root folder (or by adding the project root folder to the `DATA_PATH` environment variable):
 ```bash
 python -m experimentator configs/<config-file> --epochs <numper-of-epochs>
 ```
 
+Note: Configuration parameters can be overwritten from the command line by adding `--kwargs "<param-name>=<param-value>"`
+
+| Task name    | Configuration file    | Dataset generation script                 | Notebook available |
+|--------------|-----------------------|-------------------------------------------|:------------------:|
+| **BallSeg**  | `configs/ballseg.py`  | `scripts/prepare_camera_views_dataset.py` |         yes        |
+| **PIFBall**  | `configs/pifball.py`  | `scripts/prepare_camera_views_dataset.py` |         yes        |
+| **BallSize** | `configs/ballsize.py` | `scripts/prepare_ball_views_dataset.py`   |         yes        |
+
 ## BallSeg: ball detection with a segmentation approach
-This tasks addresses ball detection in basketball scenes. The pre-processed dataset can be built with the `deepsport/scripts/prepare_camera_views_dataset.py` script. Its items have the following attributes:
+
+This tasks addresses ball detection in basketball scenes. The pre-processed dataset items have the following attributes:
 - `image`: a `numpy.ndarray` RGB image with ball visible somewhere.
 - `calib`: a [`calib3d.Calib`](https://ispgroupucl.github.io/calib3d/calib3d/calib.html#implementation) object describing the calibration data associated to `image` using the [Keemotion convention](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/calibration.md#working-with-calibrated-images-captured-by-the-keemotion-system).
 - `ball` : a [`BallAnnotation`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/instants_dataset.py#L264) object with attributes:
   - `center`: the ball 3D position as a [`calib3d.Point3D`](https://ispgroupucl.github.io/calib3d/calib3d/points.html) object (use `calib.project_3D_to_2D(ball.center)` to retrieve pixel coordinates).
   - `visible`: a flag telling if ball is visible (always `True` in this file)
 
-The configuration file is `configs/ballseg.py` and the model can be trained by running the following command from the project root folder.
+The notebook to load the dataset and run the model training is available here: `notebooks/run_ballseg_experiment.ipynb`.
+
+## PIFBall: ball detection with a Part-Intensity-Field
+
+This tasks addresses ball detection using a keypoint detection approach greatly inspired by [PifPaf](https://openaccess.thecvf.com/content_CVPR_2019/papers/Kreiss_PifPaf_Composite_Fields_for_Human_Pose_Estimation_CVPR_2019_paper.pdf). The pre-processed dataset is the same than the one from the _BallSeg_ task.
+
+**Important note:** The computation required for the evaluation phase is extremely long when the model is untrained. For this reasons, evaluation phase should be skipped for the first few epochs:
 ```bash
-python -m experimentator configs/ballseg.py --epochs 101 --kwargs "eval_epochs=range(0,101,20)"
+python -m experimentator configs/pifball.py --epochs 101 --kwargs "eval_epochs=range(20,101,20)"
 ```
 
+## BallSize: ball diameter estimation for 3D localization
 
-## Ball size estimation
-
-This tasks addresses ball 3D localization from a single calibrated image. The pre-processed dataset can be built with the `deepsport/scripts/prepare_ball_views_dataset.py` script. Its items have the following attributes:
+This tasks addresses ball 3D localization from a single calibrated image. The pre-processed dataset items have the following attributes:
 - `image`: a `numpy.ndarray` RGB image thumbnail centered on the ball.
 - `calib`: a [`calib3d.Calib`](https://ispgroupucl.github.io/calib3d/calib3d/calib.html#implementation) object describing the calibration data associated to `image` using the [Keemotion convention](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/calibration.md#working-with-calibrated-images-captured-by-the-keemotion-system).
 - `ball` : a [`BallAnnotation`](https://gitlab.com/deepsport/deepsport_utilities/-/blob/main/deepsport_utilities/ds/instants_dataset/instants_dataset.py#L264) object with attributes:
@@ -93,9 +106,6 @@ This task uses the split defined by [`DeepSportDatasetSplitter`](https://gitlab.
 3. Uses the remaining images for the **training-set**.
 The **testing-set** should not be used except to evaluate your model and when communicating about your method.
 
+## Ball state classification
 
-The configuration file is `configs/ballsize.py` and the model can be trained by running the following command.
-```
-python -m experimentator configs/ballsize.py --epochs 101 --kwargs "eval_epochs=range(0,101,20)"
-```
-
+To be released
