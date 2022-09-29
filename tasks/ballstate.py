@@ -14,7 +14,7 @@ from experimentator.dataset import Subset, collate_fn
 from deepsport_utilities.ds.instants_dataset.views_transforms import NaiveViewRandomCropperTransform
 from deepsport_utilities.transforms import Transform
 from deepsport_utilities.utils import DefaultDict
-from dataset_utilities.ds.raw_sequences_dataset import BallState, ball_states
+from dataset_utilities.ds.raw_sequences_dataset import BallState
 
 from models.other import CropBlockDividable
 from tasks.detection import EnlargeTarget, divide
@@ -103,5 +103,4 @@ class AddBallStateFactory(Transform):
     def __call__(self, view_key, view):
         predicate = lambda a: a.camera == view_key.camera and a.type == "ball" and view.calib.projects_in(a.center) and a.visible is not False
         balls = [a for a in view.annotations if predicate(a)]
-        state_fct = lambda state: state if isinstance(state, int) else ball_states[state]
-        return {"ball_state": state_fct(balls[0].state) if balls else BallState.NONE} # takes the first ball by convention
+        return {"ball_state": balls[0].state if balls else BallState.NONE} # takes the first ball by convention
