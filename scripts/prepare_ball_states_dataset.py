@@ -17,7 +17,16 @@ from tasks.ballstate import AddBallDetectionTransform
 
 load_dotenv("/home/gva/repositories/deepsport/.env")
 
-parser = argparse.ArgumentParser(description="""""")
+parser = argparse.ArgumentParser(description="""From the (private) Keemotion raw-sequences dataset create a dataset of
+ball crops.
+    - ball positions are provided by `<arena_label>/<game_id>/balls.json` files (can be detections provided by
+      `scripts/process_raw_sequences.py`)
+    - ball states are provided by `<arena_label>/<game_id>/ball_states.csv` files (should be annotations provided by
+      BORIS annotation tool)
+Each dataset `View` item has a `ball` attribute with the following attributes:
+    - state: a `BallState` enum
+    - center: a `Point3D` (with Z=0 if ball position is given in the image space)
+""")
 parser.add_argument("output_folder")
 args = parser.parse_args()
 
