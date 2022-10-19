@@ -11,7 +11,7 @@ Clone and install the repository with
 ```bash
 git clone https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
-conda create --name deepsport python=3.8   # optional 
+conda create --name deepsport python=3.8   # optional
 pip install -e .
 ```
 
@@ -21,23 +21,40 @@ Setup your environment by copying `.env.template` to `.env` and set:
 
 # Datasets
 
-The different tasks rely on datasets to train and evaluate models.
-
-## Basketball-Instants-Dataset
-
-This repository uses the [Basketball-Instants-Dataset](https://www.kaggle.com/datasets/deepsportradar/basketball-instants-dataset), a dataset of raw images captured at the same instant from the Keemotion production system.
-
-The dataset can be downloaded and unzipped manually in the `basketball-instants-dataset/` folder of the project. To do it programmatically, you need the kaggle CLI:
+The different tasks rely on datasets to train and evaluate models. To download them programatically, you need the kaggle CLI:
 
 ```bash
 pip install kaggle
 ```
 
-Go to your Kaggle Account settings page and click on `Create new API Token` to download the file to be saved as `~/.kaggle/kaggle.json` for authentication. Finally download and unzip the dataset with:
+Go to your Kaggle Account settings page and click on `Create new API Token` to download the file to be saved as
+`~/.kaggle/kaggle.json` for authentication.
+
+
+## Basketball-Instants-Dataset
+
+The [Basketball-Instants-Dataset](https://www.kaggle.com/datasets/deepsportradar/basketball-instants-dataset) is a
+dataset of independant instants (raw images captured at the same instant by the Keemotion automated production system).
+
+The dataset can be downloaded and unzipped manually in the `basketball-instants-dataset/` folder of the project, or
+programmatically with:
 
 ```bash
 kaggle datasets download deepsportradar/basketball-instants-dataset
 unzip -qo ./basketball-instants-dataset.zip -d basketball-instants-dataset
+```
+
+## Ballistic-Raw-Sequences-Dataset
+
+The [Ballistic-Raw-Sequences-Dataset](https://www.kaggle.com/datasets/gabrielvanzandycke/ballistic-raw-sequences) is a
+dataset of raw sequences captured by the Keemotion production system.
+
+The dataset can be downloaded and unzipped manually in the `ballistic-raw-sequences/` folder of the project, or
+programmatically with:
+
+```bash
+kaggle datasets download gabrielvanzandycke/ballistic-raw-sequences
+unzip -qo ./ballistic-raw-sequences.zip -d ballistic-raw-sequences
 ```
 
 # Tasks
