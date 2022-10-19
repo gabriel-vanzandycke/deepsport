@@ -2,6 +2,7 @@ import tensorflow as tf
 import mlworkflow as mlwf
 import experimentator
 from experimentator.utils import find
+from experimentator import Subset, SubsetType
 import experimentator.tf2_experiment
 import experimentator.wandb_experiment
 import deepsport_utilities.ds.instants_dataset
@@ -29,11 +30,13 @@ dataset_name = "ball_states_dataset.pickle"
 scale_min = 0.75
 scale_max = 1.25
 max_shift = 0
-transforms = [
+
+globals().update(locals()) # required for lambda definition
+transforms = lambda scale: [
     tasks.ballstate.BallCropperTransform(
         output_shape=output_shape,
-        scale_min=scale_min,
-        scale_max=scale_max,
+        scale_min=scale_min*scale,
+        scale_max=scale_max*scale,
         margin=side_length//2-max_shift
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
@@ -43,9 +46,17 @@ transforms = [
 ]
 
 dataset_splitter = experimentator.BasicDatasetSplitter()
-dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
+dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms(1))
 subsets = dataset_splitter(dataset)
 
+
+# add ballistic dataset
+dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5))
+subsets.append(Subset("ballistic", SubsetType.EVAL, dataset))
+
+
+
+globals().update(locals()) # required to use 'BallState' in list comprehention
 classes = [BallState(i) for i in range(4)]
 
 callbacks = [
