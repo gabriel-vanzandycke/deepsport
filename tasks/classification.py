@@ -4,7 +4,8 @@ import typing
 import numpy as np
 import pandas
 
-from experimentator import Callback, ExperimentMode
+from experimentator import Callback, ExperimentMode, ConfusionMatrix
+import sklearn.metrics
 
 from tasks.detection import divide, DEFAULT_THRESHOLDS
 
@@ -17,8 +18,9 @@ class ComputeClassifactionMetrics(Callback):
     def on_cycle_begin(self, **_):
         self.acc = {"TP": 0, "FP": 0, "TN": 0, "FN": 0}
     def on_batch_end(self, batch_output, batch_target, **_):
-        target = batch_target # one hot encoded
+        target = batch_target # must be one hot encoded
         output = batch_output == np.max(batch_output, axis=1)[..., np.newaxis]
+        assert target.shape == output.shape
 
         self.acc['TP'] += np.sum(  target   *   output  , axis=0) # sum over batch dimension
         self.acc['FP'] += np.sum((1-target) *   output  , axis=0)
@@ -37,10 +39,9 @@ class ComputeClassifactionMetrics(Callback):
         }
         state["classification_metrics"] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
 
-import sklearn.metrics
 
 @dataclass
-class ConfusionMatrix(Callback):
+class ComputeConfusionMatrix(Callback):
     before = ["GatherCycleMetrics"]
     when = ExperimentMode.EVAL
     classes: typing.Tuple[list, tuple]
@@ -54,4 +55,4 @@ class ConfusionMatrix(Callback):
             labels=self.classes
         )
     def on_cycle_end(self, state, **_):
-        state['confusion_matrix'] = self.cm# / np.sum(self.cm)
+        state['confusion_matrix'] = ConfusionMatrix(self.cm)# / np.sum(self.cm)

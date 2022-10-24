@@ -21,6 +21,8 @@ experiment_type = [
 
 batch_size = 16
 
+with_diff = True
+
 # Dataset parameters
 side_length = 114
 output_shape = (side_length, side_length)
@@ -41,6 +43,7 @@ transforms = lambda scale: [
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory(),
         tasks.ballstate.AddBallStateFactory(),
     )
 ]
@@ -66,17 +69,29 @@ callbacks = [
     experimentator.GatherCycleMetrics(),
     experimentator.LogStateDataCollector(),
     tasks.classification.ComputeClassifactionMetrics(),
-    tasks.classification.ConfusionMatrix(classes=classes),
+    tasks.classification.ComputeConfusionMatrix(classes=classes),
     experimentator.wandb_experiment.LogStateWandB(),
-    experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
+    experimentator.LearningRateWarmUp(),
+    tasks.ballstate.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
 ]
+
+flayer = True
+pretrained = True
+backbone = "VGG"
+
+backbone_model = {
+    "VGG": models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False, weights='imagenet' if pretrained else None),
+    "RN50": models.tensorflow.TensorflowBackbone("resnet50.ResNet50", include_top=False, weights='imagenet' if pretrained else None),
+}[backbone]
 
 globals().update(locals()) # required to use locals() in lambdas
 chunk_processors = [
-    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image"]),
-    lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"]}),
-    models.other.GammaAugmentation("batch_input"),
+    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_input_image2"]),
+    lambda chunk: chunk.update({'batch_input_diff': tf.subtract(chunk["batch_input_image"], chunk["batch_input_image2"])}),
+    models.other.GammaAugmentation("batch_input_image"),
+    lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
+    experimentator.tf2_chunk_processors.ChannelsReductionLayer() if flayer else None,
     models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False),
     models.other.LeNetHead(output_features=len(classes)),
     lambda chunk: chunk.update({"batch_target": tf.one_hot(chunk['batch_ball_state'], len(classes))}),

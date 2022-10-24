@@ -4,11 +4,9 @@ import os
 from typing import NamedTuple
 
 import numpy as np
-import pandas
-import tensorflow as tf
 
 from calib3d import Point2D
-from experimentator import build_experiment, ExperimentMode, Callback
+from experimentator import build_experiment, Callback, ExperimentMode
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator.dataset import Subset, collate_fn
 from deepsport_utilities.ds.instants_dataset.views_transforms import NaiveViewRandomCropperTransform
@@ -21,7 +19,7 @@ from tasks.detection import EnlargeTarget, divide
 
 
 class BallStateClassification(TensorflowExperiment):
-    batch_inputs_names = ["batch_ball_state", "batch_input_image"]
+    batch_inputs_names = ["batch_ball_state", "batch_input_image", "batch_input_image2"]
     batch_metrics_names = ["batch_output", "batch_target"]
     batch_outputs_names = ["batch_output"]
 
@@ -37,7 +35,7 @@ class BallStateClassification(TensorflowExperiment):
 
     class_cache = {}
     def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
-        if subset.name is "ballistic":
+        if subset.name == "ballistic":
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
             batch_size = batch_size or self.batch_size
@@ -107,3 +105,14 @@ class AddBallStateFactory(Transform):
         predicate = lambda a: a.camera == view_key.camera and a.type == "ball" and view.calib.projects_in(a.center) and a.visible is not False
         balls = [a for a in view.annotations if predicate(a)]
         return {"ball_state": balls[0].state if balls else BallState.NONE} # takes the first ball by convention
+
+@dataclass
+class ExtractClassificationMetrics(Callback):
+    before = ["GatherCycleMetrics"]
+    after = ["ComputeClassifactionMetrics", "ComputeConfusionMatrix"]
+    when = ExperimentMode.EVAL
+    class_name: str
+    class_index: int
+    def on_cycle_end(self, state, **_):
+        for metric in ['precision', 'recall']:
+            state[f"{self.class_name}_{metric}"] = state['classification_metrics'][metric].iloc[self.class_index]
