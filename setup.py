@@ -9,7 +9,7 @@ setup(
     licence="LGPL",
     python_requires='>=3.8',
     description="Software made public for my PhD addressing ball detection and ball 3D localization",
-    version='1.1.0',
+    version='1.2.0',
     packages=find_packages(),
     install_requires=[
         "mlworkflow>=0.3.6",
@@ -20,7 +20,7 @@ setup(
         "deepsport-utilities>=4.2.1",
         "tensorflow",
         "python-dotenv",
-        "experimentator @ git+https://github.com/gabriel-vanzandycke/experimentator@main",
+        "experimentator",# @ git+https://github.com/gabriel-vanzandycke/experimentator@main",
         "tf_layers @ git+https://github.com/gabriel-vanzandycke/tf_layers@main",
         "icnet_tf2 @ git+https://github.com/gabriel-vanzandycke/icnet_tf2@master",
     ],

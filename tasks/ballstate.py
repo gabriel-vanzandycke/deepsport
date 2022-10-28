@@ -4,9 +4,10 @@ import os
 from typing import NamedTuple
 
 import numpy as np
+import tensorflow as tf
 
 from calib3d import Point2D
-from experimentator import build_experiment, Callback, ExperimentMode
+from experimentator import build_experiment, Callback, ExperimentMode, ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator.dataset import Subset, collate_fn
 from deepsport_utilities.ds.instants_dataset.views_transforms import NaiveViewRandomCropperTransform
@@ -116,3 +117,28 @@ class ExtractClassificationMetrics(Callback):
     def on_cycle_end(self, state, **_):
         for metric in ['precision', 'recall']:
             state[f"{self.class_name}_{metric}"] = state['classification_metrics'][metric].iloc[self.class_index]
+
+
+class ChannelsReductionLayer(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
+    def __init__(self, kernel_size=3, maxpool=True, batchnorm=True, padding='SAME'):
+        layers = [
+            tf.keras.layers.Conv2D(filters=3, kernel_size=kernel_size, padding=padding)
+        ]
+        if maxpool:
+            layers.append(
+                tf.keras.layers.MaxPool2D(padding=padding)
+            )
+        if batchnorm:
+            layers.append(
+                tf.keras.layers.BatchNormalization()
+            )
+        self.layers = tf.keras.models.Sequential(layers)
+        # required for printing chunk processors
+        self.kernel_size = kernel_size
+        self.maxpool = maxpool
+        self.batchnorm = batchnorm
+        self.padding = padding
+    def __call__(self, chunk):
+        chunk['batch_input'] = self.layers(chunk['batch_input'])
+

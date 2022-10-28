@@ -7,6 +7,7 @@ import experimentator.tf2_experiment
 import experimentator.wandb_experiment
 import deepsport_utilities.ds.instants_dataset
 from dataset_utilities.ds.raw_sequences_dataset import BallState
+import deepsport_utilities.ds.instants_dataset.dataset_splitters
 import tasks.ballstate
 import tasks.classification
 import models.other
@@ -48,9 +49,12 @@ transforms = lambda scale: [
     )
 ]
 
-dataset_splitter = experimentator.BasicDatasetSplitter()
+dataset_splitter = "arenas_specific"
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms(1))
-subsets = dataset_splitter(dataset)
+subsets = {
+    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-STCHAMOND", "KS-FR-NANTES", "KS-FR-NANCY", "KS-FR-EVREUX"]),
+    "random_shuffle": experimentator.BasicDatasetSplitter()
+}[dataset_splitter](dataset)
 
 
 # add ballistic dataset
@@ -91,7 +95,7 @@ chunk_processors = [
     models.other.GammaAugmentation("batch_input_image"),
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
-    experimentator.tf2_chunk_processors.ChannelsReductionLayer() if flayer else None,
+    tasks.ballstate.ChannelsReductionLayer() if flayer else None,
     models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False),
     models.other.LeNetHead(output_features=len(classes)),
     lambda chunk: chunk.update({"batch_target": tf.one_hot(chunk['batch_ball_state'], len(classes))}),
