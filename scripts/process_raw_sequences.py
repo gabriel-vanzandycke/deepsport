@@ -27,6 +27,7 @@ parser.add_argument("arena_label")
 parser.add_argument("game_id", type=int)
 parser.add_argument('--break-frame', type=int)
 parser.add_argument('--skip-video', action='store_true')
+parser.add_argument('--force-detections', action='store_true')
 args = parser.parse_args()
 
 
@@ -52,7 +53,8 @@ models = {
 }
 
 ball_file = os.path.join(folder, "balls.json")
-if os.path.isfile(ball_file):
+do_detections = not os.path.isfile(ball_file) or args.force_detections
+if not do_detections:
     print(f"{ball_file} present: skipping detections")
     database = json.load(open(ball_file))
     save_balls_callback = lambda : None
@@ -97,13 +99,16 @@ if args.skip_video:
 else:
     cm = VideoMaker(concatenated_filename)
 
+from mlworkflow import SideRunner
+sr = SideRunner()
+
 with cm as vm:
-    for instant_key in tqdm(ids.yield_keys()):
+    for instant_key in tqdm(sr.yield_async(ids.yield_keys())):
         instant = ids.query_item(instant_key)
         if args.break_frame and instant.sequence_frame_index > args.break_frame:
             break
 
-        if os.path.isfile(ball_file):
+        if not do_detections:
             ball = database.get(instant.sequence_frame_index, None)
         else:
             ball = detect_ball(instant)
