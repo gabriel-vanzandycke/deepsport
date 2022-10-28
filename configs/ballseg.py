@@ -38,7 +38,7 @@ transforms = [
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddDiffFactory() if with_diff else None,
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory() if with_diff else None,
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
     )
 ]
