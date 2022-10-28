@@ -7,3 +7,4 @@ basketball-instants-dataset
 ballistic-raw-sequences
 *.out
 *.log
+wandb
