@@ -50,7 +50,7 @@ transforms = lambda scale: [
 ]
 
 dataset_splitter = "arenas_specific"
-dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms(1))
+dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms(1)))
 subsets = {
     "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-STCHAMOND", "KS-FR-NANTES", "KS-FR-NANCY", "KS-FR-EVREUX"]),
     "random_shuffle": experimentator.BasicDatasetSplitter()
@@ -58,7 +58,7 @@ subsets = {
 
 
 # add ballistic dataset
-dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5))
+dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
 subsets.append(Subset("ballistic", SubsetType.EVAL, dataset))
 
 
@@ -79,9 +79,15 @@ callbacks = [
     tasks.ballstate.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
 ]
 
-flayer = True
-pretrained = True
+projector = "1layer"
+
+pretrained = False
 backbone = "VGG"
+
+projector_network = {
+    "None": None,
+    "1layer": tasks.ballstate.ChannelsReductionLayer(),
+}[projector]
 
 backbone_model = {
     "VGG": models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False, weights='imagenet' if pretrained else None),
@@ -95,7 +101,7 @@ chunk_processors = [
     models.other.GammaAugmentation("batch_input_image"),
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
-    tasks.ballstate.ChannelsReductionLayer() if flayer else None,
+    projector_network,
     models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False),
     models.other.LeNetHead(output_features=len(classes)),
     lambda chunk: chunk.update({"batch_target": tf.one_hot(chunk['batch_ball_state'], len(classes))}),

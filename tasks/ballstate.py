@@ -120,14 +120,14 @@ class ExtractClassificationMetrics(Callback):
 
 
 class ChannelsReductionLayer(ChunkProcessor):
-    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
-    def __init__(self, kernel_size=3, maxpool=True, batchnorm=True, padding='SAME'):
+    mode = ExperimentMode.ALL
+    def __init__(self, kernel_size=3, maxpool=True, batchnorm=True, padding='SAME', strides=1):
         layers = [
             tf.keras.layers.Conv2D(filters=3, kernel_size=kernel_size, padding=padding)
         ]
         if maxpool:
             layers.append(
-                tf.keras.layers.MaxPool2D(padding=padding)
+                tf.keras.layers.MaxPool2D(padding=padding, strides=strides)
             )
         if batchnorm:
             layers.append(
@@ -139,6 +139,7 @@ class ChannelsReductionLayer(ChunkProcessor):
         self.maxpool = maxpool
         self.batchnorm = batchnorm
         self.padding = padding
+        self.strides = strides
     def __call__(self, chunk):
         chunk['batch_input'] = self.layers(chunk['batch_input'])
 
