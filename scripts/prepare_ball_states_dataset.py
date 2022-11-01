@@ -15,7 +15,7 @@ from mlworkflow import TransformedDataset, FilteredDataset, PickledDataset
 
 from tasks.ballstate import AddBallDetectionTransform
 
-load_dotenv("/home/gva/repositories/deepsport/.env")
+load_dotenv(os.path.join(os.environ['HOME'], "repositories/deepsport/.env"))
 
 parser = argparse.ArgumentParser(description="""From the (private) Keemotion raw-sequences dataset create a dataset of
 ball crops.
@@ -28,11 +28,11 @@ Each dataset `View` item has a `ball` attribute with the following attributes:
     - center: a `Point3D` (with Z=0 if ball position is given in the image space)
 """)
 parser.add_argument("output_folder")
+parser.add_argument("--local-storage", default="/DATA/datasets")
 args = parser.parse_args()
 
-local_storage = "/DATA/datasets"
 dummy = boto3.Session()
-ds = RawSequencesDataset(local_storage=local_storage, progress_wrapper=tqdm, session=dummy)
+ds = RawSequencesDataset(local_storage=args.local_storage, progress_wrapper=tqdm, session=dummy)
 ds = TransformedDataset(ds, [AddBallStatesTransform()])
 ds = FilteredDataset(ds, lambda k,v: v.ball_states is not None)
 ids = InstantsDataset(ds)
@@ -43,7 +43,8 @@ def convert_ball_format(_, instant):
     instant.annotations = [BallAnnotation({'center': ball3D, 'visible': True, 'image': camera_idx, 'state': instant.ball_state})]
     return instant
 
-ids = TransformedDataset(ids, [AddBallDetectionTransform()])
+dataset_folder = os.path.join(args.local_storage, "raw-games")
+ids = TransformedDataset(ids, [AddBallDetectionTransform(dataset_folder=dataset_folder)])
 ids = FilteredDataset(ids, lambda k,v: v.ball2D is not None and v.ball_state is not BallState.NONE)
 ids = TransformedDataset(ids, [convert_ball_format])
 vds = ViewsDataset(ids, view_builder=BuildBallViews(margin=128, margin_in_pixels=True))

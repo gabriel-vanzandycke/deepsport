@@ -80,8 +80,9 @@ BALLSEG_THRESHOLD = 0.8
 
 
 class AddBallDetectionTransform(Transform):
-    database_path = "/DATA/datasets/raw-games/{}/{}/balls.json"
-    def __init__(self):
+    def __init__(self, dataset_folder):
+        self.dataset_folder = dataset_folder
+        self.database_path = os.path.join(dataset_folder, "{}/{}/balls.json")
         def factory(args):
             arena_label, game_id = args
             filename = self.database_path.format(arena_label, game_id)
