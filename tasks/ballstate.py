@@ -105,7 +105,7 @@ class AddBallStateFactory(Transform):
     def __call__(self, view_key, view):
         predicate = lambda a: a.camera == view_key.camera and a.type == "ball" and view.calib.projects_in(a.center) and a.visible is not False
         balls = [a for a in view.annotations if predicate(a)]
-        return {"ball_state": balls[0].state if balls else BallState.NONE} # takes the first ball by convention
+        return {"ball_state": balls[0].state if balls and balls[0].state is not None else BallState.NONE} # takes the first ball by convention
 
 @dataclass
 class ExtractClassificationMetrics(Callback):
