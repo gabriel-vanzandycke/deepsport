@@ -79,16 +79,17 @@ callbacks = [
     tasks.ballstate.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
 ]
 
-projector = "1layer"
 
-pretrained = False
-backbone = "VGG"
 
+projector = "conv2d"
 projector_network = {
     "None": None,
     "1layer": tasks.ballstate.ChannelsReductionLayer(),
+    "conv2d": lambda chunk: chunk.update({"batch_input": tf.keras.layers.Conv2D(filters=3, kernel_size=3, padding='SAME')(chunk["batch_input"])})
 }[projector]
 
+backbone = "VGG"
+pretrained = True
 backbone_model = {
     "VGG": models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False, weights='imagenet' if pretrained else None),
     "RN50": models.tensorflow.TensorflowBackbone("resnet50.ResNet50", include_top=False, weights='imagenet' if pretrained else None),
