@@ -2,9 +2,10 @@
 import argparse
 import contextlib
 from datetime import timedelta, datetime
-import json
+import pickle
 import os
-print("Python Executable:", os.sys.executable)
+import sys
+print("Python Executable:", sys.executable)
 
 import boto3
 import cv2
@@ -13,36 +14,27 @@ import numpy as np
 from tqdm.auto import tqdm
 import tensorflow as tf
 
-from calib3d import Point2D
-from dataset_utilities.ds.raw_sequences_dataset import RawSequencesDataset, InstantsDataset
-from dataset_utilities.providers import AWSSession
+from dataset_utilities.ds.raw_sequences_dataset import RawSequencesDataset, SequenceInstantsDataset
 from deepsport_utilities.utils import DelayedCallback, VideoMaker
 
 from tasks.ballstate import Detector, PIFBALL_THRESHOLD, BALLSEG_THRESHOLD
 
-load_dotenv("/home/gva/repositories/deepsport/.env")
+load_dotenv()
 
 parser = argparse.ArgumentParser(description="""Process Sequence to detect ball""")
 parser.add_argument("arena_label")
 parser.add_argument("game_id", type=int)
 parser.add_argument('--break-frame', type=int)
 parser.add_argument('--skip-video', action='store_true')
-parser.add_argument('--force-detections', action='store_true')
 args = parser.parse_args()
 
 
-arena_label = args.arena_label
-game_id = args.game_id
-local_storage = "/DATA/datasets"
-folder = os.path.join(local_storage, "raw-games", arena_label, str(game_id))
-
-predicate = lambda k,v: k.arena_label == arena_label and k.game_id == game_id
-dummy = AWSSession("director@PROD")
-ds = RawSequencesDataset(local_storage=local_storage, progress_wrapper=tqdm, predicate=predicate, session=dummy)
-ids = InstantsDataset(ds)
+predicate = lambda k,v: k.arena_label == args.arena_label and k.game_id == args.game_id
+dummy = boto3.Session()
+sds = RawSequencesDataset(progress_wrapper=tqdm, predicate=predicate, session=dummy)
+ids = SequenceInstantsDataset(sds, tol=None) # tolerence set to None, ignoring delay between streams, as annotations were initially performed on such.
 
 
-DISTANCE_THRESHOLD = 28 # pixels
 thresholds = {
     "pifball": PIFBALL_THRESHOLD,
     "ballseg": BALLSEG_THRESHOLD
@@ -52,32 +44,29 @@ models = {
     "ballseg": "20220829_144032.694734",
 }
 
-ball_file = os.path.join(folder, "balls.json")
-do_detections = not os.path.isfile(ball_file) or args.force_detections
-if not do_detections:
-    print(f"{ball_file} present: skipping detections")
-    database = json.load(open(ball_file))
-    save_balls_callback = lambda : None
-    detectors = []
-else:
-    print(f"{ball_file} absent: doing detections, requesting a GPU")
-    assert len(tf.config.list_physical_devices('GPU')) > 0, "A GPU is required to detect balls"
-    detectors = [Detector(model, experiment_id) for model, experiment_id in models.items()]
-    database = {}
-    save_balls_callback = DelayedCallback(lambda : json.dump(database, open(ball_file, "w")), timedelta=timedelta(seconds=10))
+folder = os.path.join(sds.dataset_folder, args.arena_label, str(args.game_id))
+ball_file = os.path.join(folder, "balls3d_new.pickle")
 
-def detect_ball(instant):
-    try:
-        detections = [detector(instant) for detector in detectors]
-    except:
-        return None
-    if any([detection.value < thresholds[detection.model] for detection in detections]):
-        return None
-    center = Point2D(np.mean([detection.point for detection in detections], axis=0))
-    if any([np.linalg.norm(detection.point-center) > DISTANCE_THRESHOLD for detection in detections]):
-        return None
-    database[instant.sequence_frame_index] = (int(detections[0].image), int(center.x), int(center.y))
-    return database[instant.sequence_frame_index]
+assert len(tf.config.list_physical_devices('GPU')) > 0, "A GPU is required to detect balls"
+
+detectors = [Detector(model, os.path.join(os.environ['RESULTS_FOLDER'], model, experiment_id, "config_inference.py"), k=[4]) for model, experiment_id in models.items()]
+
+database = {}
+save_balls_callback = DelayedCallback(lambda : pickle.dump(database, open(ball_file, "wb")), timedelta=timedelta(seconds=10))
+
+#import logging
+#logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
+
+concatenated_filename = os.path.join(folder, f"{args.arena_label}_{args.game_id}_concatenated.mp4")
+
+if args.skip_video:
+    cm = contextlib.nullcontext()
+else:
+    cm = VideoMaker(concatenated_filename)
+
+from mlworkflow import SideRunner
+sr = SideRunner()
+
 
 def print_text(img, text, scale, thickness, color='white'):
     color = {
@@ -88,43 +77,28 @@ def print_text(img, text, scale, thickness, color='white'):
     textsize = cv2.getTextSize(text, font, scale, thickness)[0]
     cv2.putText(img, text, ((img.shape[1]-textsize[0]+thickness)//2, int(img.shape[0]*0.1)), font, scale, color, thickness, bottomLeftOrigin=False)
 
-#import logging
-#logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
-
-
-concatenated_filename = os.path.join(folder, f"{arena_label}_{game_id}_concatenated.mp4")
-
-if args.skip_video:
-    cm = contextlib.nullcontext()
-else:
-    cm = VideoMaker(concatenated_filename)
-
-from mlworkflow import SideRunner
-sr = SideRunner()
 
 with cm as vm:
     for instant_key in tqdm(sr.yield_async(ids.yield_keys())):
         instant = ids.query_item(instant_key)
-        if args.break_frame and instant.sequence_frame_index > args.break_frame:
+        if args.break_frame and instant.frame_indices[0] > args.break_frame:
             break
 
-        if not do_detections:
-            ball = database.get(instant.sequence_frame_index, None)
-        else:
-            ball = detect_ball(instant)
+        detections = [d for detector in detectors for d in detector(instant) if d.value > thresholds[d.model]]
+        database[instant.frame_indices[0]] = detections
 
-        if ball is not None:
-            camera_idx, x, y = ball
-            instant.images[camera_idx][x-1:x+1,:] = np.array([0,255,0])
-            instant.images[camera_idx][:,y-1:y+1] = np.array([0,255,0])
+        for detection in detections:
+            model, camera_idx, point2D, value = detection
+            x, y = point2D.to_int_tuple()
+            instant.images[camera_idx][y-1:y+1,:] = np.array([0,255,0])
+            instant.images[camera_idx][:,x-1:x+1] = np.array([0,255,0])
 
-        img = np.hstack(instant.images)
-
-        timestamp_str = str(datetime.fromtimestamp(instant.timestamp/1000.0))
-        print_text(img, timestamp_str, 3, 20)
-        print_text(img, timestamp_str, 3, 5, 'green')
 
         if not args.skip_video:
+            img = np.hstack(instant.images)
+            timestamp_str = str(datetime.fromtimestamp(instant.timestamp/1000.0))
+            print_text(img, timestamp_str, 3, 20)
+            print_text(img, timestamp_str, 3, 5, 'green')
             vm(img)
 
         save_balls_callback()

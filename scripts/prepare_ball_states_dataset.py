@@ -5,49 +5,60 @@ print("Python Executable:", os.sys.executable)
 
 import boto3
 from dotenv import load_dotenv
-import numpy as np
 from tqdm.auto import tqdm
 
-from calib3d import Point2D
-from dataset_utilities.ds.raw_sequences_dataset import RawSequencesDataset, InstantsDataset, AddBallStatesTransform, BallState
-from deepsport_utilities.ds.instants_dataset import ViewsDataset, BuildBallViews, BallAnnotation, AddBallAnnotation
+from dataset_utilities.ds.raw_sequences_dataset import RawSequencesDataset, SequenceInstantsDataset, BallState
+from deepsport_utilities.ds.instants_dataset import ViewsDataset, BuildBallViews
 from mlworkflow import TransformedDataset, FilteredDataset, PickledDataset
 
-from tasks.ballstate import AddBallDetectionTransform
+from experimentator import find
 
-load_dotenv(os.path.join(os.environ['HOME'], "repositories/deepsport/.env"))
+from tasks.ballstate import AddBallDetectionsTransform
 
-parser = argparse.ArgumentParser(description="""From the (private) Keemotion raw-sequences dataset create a dataset of
+load_dotenv()
+
+parser = argparse.ArgumentParser(description="""From the (private) Keemotion raw-sequences dataset, creates a dataset of
 ball crops.
     - ball positions are provided by `<arena_label>/<game_id>/balls.json` files (can be detections provided by
       `scripts/process_raw_sequences.py`)
-    - ball states are provided by `<arena_label>/<game_id>/ball_states.csv` files (should be annotations provided by
-      BORIS annotation tool)
+    - ball states are provided by `<arena_label>/<game_id>/ball_states.csv` files (exported from BORIS annotation tool)
 Each dataset `View` item has a `ball` attribute with the following attributes:
     - state: a `BallState` enum
     - center: a `Point3D` (with Z=0 if ball position is given in the image space)
 """)
 parser.add_argument("output_folder")
-parser.add_argument("--local-storage", default="/DATA/datasets")
+parser.add_argument("--local-storage", default=os.environ.get("LOCAL_STORAGE"))
 args = parser.parse_args()
 
 dummy = boto3.Session()
-ds = RawSequencesDataset(local_storage=args.local_storage, progress_wrapper=tqdm, session=dummy)
-ds = TransformedDataset(ds, [AddBallStatesTransform()])
-ds = FilteredDataset(ds, lambda k,v: v.ball_states is not None)
-ids = InstantsDataset(ds)
+sds = RawSequencesDataset(local_storage=args.local_storage, session=dummy, progress_wrapper=tqdm)
+ds = FilteredDataset(sds, lambda k,v: len(list(v.ball_states)) > 0) # only keep sequences on which ball state was annotated with BORIS
+ids = SequenceInstantsDataset(ds)
 
-def convert_ball_format(_, instant):
-    camera_idx = instant.ball2D[0]
-    ball3D = instant.calibs[camera_idx].project_2D_to_3D(Point2D(instant.ball2D[2], instant.ball2D[1]), Z=0)
-    instant.annotations = [BallAnnotation({'center': ball3D, 'visible': True, 'image': camera_idx, 'state': instant.ball_state})]
-    return instant
+class ReplaceBallAnnotationsTransform:
+    def __init__(self, ballistic_trajectories_dataset_filename):
+        ds = PickledDataset(find(ballistic_trajectories_dataset_filename))
+        self.lookuptable = {}
+        for k in tqdm(ds.keys, desc="building annotations lookuptable"):
+            instants = ds.query_item(k)
+            for instant in instants:
+                annotation = instant in [instants[0], instants[-1]]
+                instant.ball.origin = "annotation" if annotation else "interpolation"
+                self.lookuptable[instant.arena_label, instant.game_id, instant.timestamp] = instant.ball
+    def __call__(self, sequence_instant_key, sequence_instant):
+        key = sequence_instant_key[0:3]
+        ball = self.lookuptable.get(key, None)
+        if ball is not None:
+            sequence_instant.annotations = [ball]
+        return sequence_instant
 
-dataset_folder = os.path.join(args.local_storage, "raw-games")
-ids = TransformedDataset(ids, [AddBallDetectionTransform(dataset_folder=dataset_folder)])
-ids = FilteredDataset(ids, lambda k,v: v.ball2D is not None and v.ball_state is not BallState.NONE)
-ids = TransformedDataset(ids, [convert_ball_format])
-vds = ViewsDataset(ids, view_builder=BuildBallViews(margin=128, margin_in_pixels=True))
-vds = TransformedDataset(vds, [AddBallAnnotation()])
+ids = TransformedDataset(ids, [
+    AddBallDetectionsTransform(dataset_folder=sds.dataset_folder, xy_inverted=True),
+    ReplaceBallAnnotationsTransform("instants_ballistic_trajectories_600ms_filtered.pickle"),
+])
 
-PickledDataset.create(vds, os.path.join(args.output_folder, "ball_states_dataset.pickle"), yield_keys_wrapper=tqdm)
+ids = FilteredDataset(ids, lambda k,v: (bool(v.annotations) or bool(v.detections)) and v.ball_state is not BallState.NONE)
+origins = ['annotation', 'detection', 'pseudo-annotation', 'interpolation']
+vds = ViewsDataset(ids, view_builder=BuildBallViews(origins=origins, margin=128, margin_in_pixels=True))
+
+PickledDataset.create(vds, os.path.join(args.output_folder, "ball_states_dataset_with_annotations.pickle"), yield_keys_wrapper=tqdm)
