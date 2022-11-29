@@ -9,7 +9,7 @@ setup(
     licence="LGPL",
     python_requires='>=3.8',
     description="Software made public for my PhD addressing ball detection and ball 3D localization",
-    version='1.2.0',
+    version='1.3.0',
     packages=find_packages(),
     install_requires=[
         "mlworkflow>=0.3.6",
@@ -17,7 +17,7 @@ setup(
         "numpy",
         "calib3d",
         "pandas",
-        "deepsport-utilities>=4.2.1",
+        "deepsport-utilities>=4.4.0",
         "tensorflow",
         "python-dotenv",
         "experimentator",# @ git+https://github.com/gabriel-vanzandycke/experimentator@main",
