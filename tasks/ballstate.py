@@ -118,8 +118,8 @@ class AddBallDetectionsTransform(Transform):
         if i1 != i2: # means two different candidate were found
             point2D = Point2D(np.mean([data[i1].point, data[i2].point], axis=0))
             pseudo_annotation = BallDetection("pseudo-annotation", data[i1].camera_idx, point2D, value=values_matrix[i1, i2])
-            for i in sorted([i1, i2], reverse=True): # safe delete using decreasing indices
-                del data[i]
+            #for i in sorted([i1, i2], reverse=True): # safe delete using decreasing indices
+            #    del data[i]
             return pseudo_annotation
         return None
 
