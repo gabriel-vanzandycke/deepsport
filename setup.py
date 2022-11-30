@@ -20,6 +20,7 @@ setup(
         "deepsport-utilities>=4.4.0",
         "tensorflow",
         "python-dotenv",
+        "jupyter",
         "experimentator",# @ git+https://github.com/gabriel-vanzandycke/experimentator@main",
         "tf_layers @ git+https://github.com/gabriel-vanzandycke/tf_layers@main",
         "icnet_tf2 @ git+https://github.com/gabriel-vanzandycke/icnet_tf2@master",
