@@ -133,7 +133,8 @@ class AddBallDetectionsTransform(Transform):
                 "center": instant.calibs[detection.camera_idx].project_2D_to_3D(point(detection.point), Z=0),
                 "image": detection.camera_idx,
                 "visible": True, # visible enough to have been detected by a detector
-                "state": instant.ball_state
+                "state": instant.ball_state,
+                "value": detection.value
             })
             pseudo_annotation = self.extract_pseudo_annotation(data)
             if pseudo_annotation is not None:
