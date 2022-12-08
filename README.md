@@ -15,9 +15,12 @@ conda create --name deepsport python=3.8   # optional
 pip install -e .
 ```
 
-Setup your environment by copying `.env.template` to `.env` and set:
+Setup your environment by copying `.env.template` to `.env` and set the following variables:
+- `LOCAL_STORAGE` to the folder in which downloaded datasets should be stored.
 - `DATA_PATH` to the list of folders to find datasets or configuration files, ordered by lookup priority.
 - `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
+
+**Note:** Environment variable like `${HOME}` must be enclosed in curly brackets.
 
 # Datasets
 
