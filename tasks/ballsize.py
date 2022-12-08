@@ -1,9 +1,10 @@
 from collections import defaultdict
 from dataclasses import dataclass
-import pandas
+import typing
 
-import tensorflow as tf
 import numpy as np
+import pandas
+import tensorflow as tf
 
 from calib3d import Calib, Point3D, Point2D
 from deepsport_utilities.ds.instants_dataset.views_transforms import ViewRandomCropperTransform
@@ -106,7 +107,7 @@ class ComputeDiameterError(Callback):
 class ComputeDetectionMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
-    thresholds: (int, np.ndarray, list, tuple) = np.linspace(0,1,51)
+    thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
     def init(self, exp):
         self.k = exp.cfg.get('k', 1)
     def on_cycle_begin(self, **_):
@@ -120,8 +121,8 @@ class ComputeDetectionMetrics(Callback):
             i = indices[np.argmax(predicted_is_ball[indices])]
             output = (predicted_is_ball[i] > self.thresholds).astype(np.uint8)
             target = target_is_ball[i]
-            self.acc['TP'] +=   target   *   output  
-            self.acc['FP'] += (1-target) *   output  
+            self.acc['TP'] +=   target   *   output
+            self.acc['FP'] += (1-target) *   output
             self.acc['FN'] +=   target   * (1-output)
             self.acc['TN'] += (1-target) * (1-output)
             has_ball = batch_has_ball[i] if batch_has_ball else target

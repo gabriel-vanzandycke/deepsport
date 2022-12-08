@@ -4,3 +4,7 @@ __pycache__
 *.ipynb_checkpoints
 results/
 basketball-instants-dataset
+ballistic-raw-sequences
+*.out
+*.log
+wandb

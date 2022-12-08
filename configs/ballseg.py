@@ -1,4 +1,3 @@
-import numpy as np
 import tensorflow as tf
 import mlworkflow as mlwf
 import experimentator
@@ -26,7 +25,6 @@ output_shape = (640, 640)
 with_diff = True
 
 # DeepSport Dataset
-#dataset_name = "camera_with_ball_visible_views.pickle"
 dataset_name = "camera_with_ball_visible_views.pickle"
 size_min = 11
 size_max = 28
@@ -38,7 +36,7 @@ transforms = [
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddDiffFactory() if with_diff else None,
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory() if with_diff else None,
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
     )
 ]

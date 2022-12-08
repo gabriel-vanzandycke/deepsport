@@ -1,4 +1,3 @@
-import numpy as np
 import tensorflow as tf
 import mlworkflow as mlwf
 import experimentator
@@ -8,7 +7,6 @@ import experimentator.tf2_experiment
 import experimentator.tf2_chunk_processors
 
 import deepsport_utilities.ds.instants_dataset
-#from experiment import chunk_processors
 
 import models.other
 import tasks.pifball
