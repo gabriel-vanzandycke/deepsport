@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from calib3d import Point3D, Point2D
@@ -18,9 +19,19 @@ class BallisticModel():
         t = t - self.T0
         return self.p0 + self.v0*t + self.a0*t**2/2
 
+class Optimizer(ABC):
+    @abstractmethod
+    def fit(self, samples, T0):
+        raise NotImplementedError()
+    @abstractmethod
+    def inliers(self, samples):
+        raise NotImplementedError()
+    @abstractmethod
+    def error(self, samples):
+        raise NotImplementedError()
 
 @dataclass
-class MSE3DOptimizer:
+class MSE3DOptimizer(Optimizer):
     threshold: float
     def fit(self, samples, T0):
         # For linear system Ax = b, least square error x = (inverse(A'A))(A'b)
@@ -35,7 +46,7 @@ class MSE3DOptimizer:
         return np.sqrt(np.sum(np.array([self.model(sample.timestamp) - sample.ball.center for sample in samples])**2, axis=1))
 
 @dataclass
-class MSE2DOptimizer:
+class MSE2DOptimizer(Optimizer):
     threshold: float
     def fit(self, samples, T0):
         def error(params):
@@ -56,7 +67,7 @@ class MSE2DOptimizer:
 
 
 @dataclass
-class MSE2DwithDiameterOptimizer:
+class MSE2DwithDiameterOptimizer(MSE2DOptimizer):
     alpha: float = 0.5
     def __post_init__(self):
         assert 0.0 <= self.alpha <= 1.0
@@ -68,3 +79,23 @@ class MSE2DwithDiameterOptimizer:
         return np.linalg.norm(d_data - d_pred, axis=0)
     def error(self, samples):
         return self.alpha*self.position_error(samples) + (1-self.alpha)*self.diameter_error(samples)
+
+
+@dataclass
+class IterativeOptimizer(Optimizer):
+    optimizer: Optimizer
+    min_inliers: int = 5
+    def fit(self, samples, T0):
+        self.optimizer.fit(samples, T0)
+        inliers = self.inliers(samples)
+        if len(inliers) < self.min_inliers:
+            self.model = None
+            return
+        if len(inliers) == len(samples):
+            return
+        samples = [s for i, s in enumerate(samples) if i in inliers]
+        self.fit(samples, T0)
+    def error(self, samples):
+        return self.optimizer.error(samples)
+    def inliers(self, samples):
+        return self.optimizer.inliers(samples)
