@@ -15,7 +15,7 @@ setup(
         "mlworkflow>=0.3.6",
         "dill",
         "numpy",
-        "calib3d",
+        "calib3d>=2.8.1",
         "pandas",
         "deepsport-utilities>=4.4.0",
         "tensorflow",
