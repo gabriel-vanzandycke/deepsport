@@ -97,10 +97,10 @@ def expected_range(calib: Calib, ball: Point2D, court: Court=None, max_ball_heig
     bz = calib.project_2D_to_3D(ball, Z=-BALL_DIAMETER/2)
     by = calib.project_2D_to_3D(ball, Y=-100)
     bx = calib.project_2D_to_3D(ball, X=-200 if bz.x < court.w/2 else court.w-200)
-    size_min = max(calib.compute_length2D(BALL_DIAMETER, Point3D(np.hstack([bx, by, bz]))))
+    size_min = max(calib.compute_length2D(Point3D(np.hstack([bx, by, bz])), BALL_DIAMETER))
     bz = calib.project_2D_to_3D(ball, Z=-max_ball_height)
     by = calib.project_2D_to_3D(ball, Y=court.h+100)
-    size_max = min(calib.compute_length2D(BALL_DIAMETER, Point3D(np.hstack([by, bz]))))
+    size_max = min(calib.compute_length2D(Point3D(np.hstack([by, bz])), BALL_DIAMETER))
     return size_min, size_max
 
 @dataclass

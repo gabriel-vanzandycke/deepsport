@@ -101,7 +101,7 @@ class AddPIFBallTargetViewFactory(CreatePIFTarget):
         calib = view.calib
         balls_3D = Point3D([a.center for a in view.annotations if a.type == "ball" and calib.projects_in(a.center)])
         keypoints = calib.project_3D_to_2D(balls_3D)
-        scales = calib.compute_length2D(BALL_DIAMETER/2, balls_3D)*self.scale_factor
+        scales = calib.compute_length2D(balls_3D, BALL_DIAMETER/2)*self.scale_factor
         return (calib.width, calib.height), keypoints, scales
 
 class CustomResnet50(ChunkProcessor):

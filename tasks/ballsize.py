@@ -37,7 +37,7 @@ class BallRandomCropperTransform(ViewRandomCropperTransform):
 
     def _get_current_parameters(self, view_key, view):
         keypoints = view.calib.project_3D_to_2D(view.ball.center)
-        size = float(view.calib.compute_length2D(self.true_size, view.ball.center))
+        size = float(view.calib.compute_length2D(view.ball.center, self.true_size))
         input_shape = view.calib.width, view.calib.height
         return keypoints, size, input_shape
 
@@ -55,7 +55,7 @@ def compute_projection_error(calib: Calib, point3D: Point3D, pixel_error: float)
     difference = point3D - calib.C # ball to camera vector
     difference.z = 0 # set z coordinate to 0 to compute pixel_error on the projected plane
     distance = np.linalg.norm(difference, axis=0) # ball - camera distance projected on Z=0 plane
-    diameter = calib.compute_length2D(BALL_DIAMETER, point3D) # pixel diameter
+    diameter = calib.compute_length2D(point3D, BALL_DIAMETER) # pixel diameter
     return distance*pixel_error/diameter
 
 def compute_relative_error(calib: Calib, point3D: Point3D, pixel_size: float):
