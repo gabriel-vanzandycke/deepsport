@@ -26,8 +26,7 @@ def compute_length2D(K, RT, points3D, length, points2D=None):
     answer = np.linalg.norm(points2D - Point2D(points2D_H) * np.sign(points2D_H[2]), axis=0)
     return answer
 
-def model_2D(weights=None, v_scale=1, p_scale=1, **kwargs):
-    weights = np.vstack(weights)
+def model_2D(p, v_scale=1, p_scale=1, **kwargs):
 
     class BallisticModel():
         def __init__(self, initial_condition, T0):
@@ -69,6 +68,7 @@ def model_2D(weights=None, v_scale=1, p_scale=1, **kwargs):
                 d_pred = compute_length2D(K, RT, points3D, BALL_DIAMETER, points2D=p_pred)
                 d_error = d_data - d_pred
 
+                return p(p_error, d_error)
                 return p_error + np.linalg.norm(d_error, axis=0) # to delete
                 return (np.stack([p_error, d_error])*weights).flatten()
 
@@ -99,15 +99,16 @@ class ModelSetter:
             sample.ball.model = self.model
 
 class SlidingWindow:
-    def __init__(self, length, step, threshold, min_inliers_ratio=.8, min_inliers=5, weights=None, **kwargs):
+    def __init__(self, length, step, threshold, min_inliers_ratio=.8, min_inliers=5, **kwargs):
         self.length = length
         self.step = step
         self.window = []
-        self.Model = model_2D(weights=weights, **kwargs)
+        self.Model = model_2D(**kwargs)
         self.threshold = threshold#np.array([[10], [10]]) # position error, diameter error
         self.min_inliers_ratio = min_inliers_ratio # min inliers ratio between first and last inliers
         self.min_inliers = min_inliers  # min inliers to consider the model valid
         self.popped = 0
+        self.stop = False
 
     def pop(self, count, callback=None):
         for i in range(count):
@@ -124,14 +125,22 @@ class SlidingWindow:
 
         model = None
         while True:
+            if self.stop:
+                yield from self.pop(len(self.window), callback=None)
+                break
+
             if self.popped > 110:
                 self.popped = 0
-            #while len(self.window) < self.length:
+
             for _ in range(self.step):
-                self.window.append(next(gen))
+                try:
+                    self.window.append(next(gen))
+                except StopIteration:
+                    self.stop = True
+                    pass
 
             new_model = self.Model.fit(self.window)
-            print(" "*self.popped + "".join(["*" if s.ball.state == BallState.FLYING else "." for s in self.window]))
+            #print(" "*self.popped + "".join(["*" if s.ball.state == BallState.FLYING else "." for s in self.window]))
             if new_model is None:
                 print("")
                 yield from self.pop(len(self.window) - self.length + self.step, callback=ModelSetter(model))
@@ -139,7 +148,7 @@ class SlidingWindow:
                 continue
 
             inliers = np.where(new_model.error[0] < self.threshold)[0]
-            print(" "*self.popped + "".join(["-" if i in inliers else " " for i in range(len(self.window))]))
+            #print(" "*self.popped + "".join(["-" if i in inliers else " " for i in range(len(self.window))]))
             inliers_ratio = len(inliers)/(inliers[-1] - inliers[0] + 1)
             if len(inliers) < self.min_inliers or inliers_ratio < self.min_inliers_ratio:
                 yield from self.pop(len(self.window) - self.length + self.step, callback=ModelSetter(model))
