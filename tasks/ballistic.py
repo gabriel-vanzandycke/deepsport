@@ -108,16 +108,6 @@ class Fitter:
             return None
         return BallisticModel(result['x'], T0)
 
-
-class ModelSetter:
-    def __init__(self, model, inliers):
-        self.model = model
-        self.inliers = inliers
-    def __call__(self, index, sample):
-        if self.model and self.inliers[0] <= index <= self.inliers[-1]:
-            sample.ball.model = self.model
-
-
 repr_map = { # true, perd
     (True, True): 'ʘ',
     (True, False): '·',
@@ -141,14 +131,11 @@ class SlidingWindow:
             for i, label in enumerate(["normal", "no model", "not enough inliers", "too many outliers", "proposed model", "fewer inliers than previous model"]):
                 print(f"\x1b[3{i}m{label}\x1b[0m")
 
-    def add(self, item):
-        self.window.append(item)
-
-    def pop(self, count=1, callback=None):
+    def drop(self, count=1, callback=None):
         for i in range(count):
             sample = self.window.pop(0)
             if callback is not None:
-                callback(i, sample)
+                callback(sample)
             yield sample
             self.popped.append((sample.ball.state is BallState.FLYING, hasattr(sample.ball, 'model')))
 
@@ -191,14 +178,14 @@ class SlidingWindow:
 
             # move window until model is found
             while (model := self.fit()) is None:
-                yield from self.pop()
-                self.add(next(gen))
+                yield from self.drop(1)
+                self.window.append(next(gen))
 
             self.print(model.inliers, color=4)
 
             # grow window while model fits data
             while True:
-                self.add(next(gen))
+                self.window.append(next(gen))
                 new_model = self.fit()
                 if new_model is None:
                     self.print([], color=2)
@@ -211,5 +198,6 @@ class SlidingWindow:
             self.print(model.inliers)
 
             # pop model data
-            yield from self.pop(model.inliers[-1]+1, callback=ModelSetter(model, model.inliers))
+            callback = lambda s: setattr(s.ball, 'model', model)
+            yield from self.drop(model.inliers[-1]+1, callback=callback)
 
