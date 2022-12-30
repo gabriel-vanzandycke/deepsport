@@ -39,7 +39,7 @@ class BallisticModel():
         t = t - self.T0
         return self.p0 + self.v0*t + self.a0*t**2/2
 
-    def error(self, samples, p):
+    def inliers(self, samples, condition):
         P  = np.stack([s.calib.P for s in samples])
         RT = np.stack([np.hstack([s.calib.R, s.calib.T]) for s in samples])
         K  = np.stack([s.calib.K for s in samples])
@@ -55,16 +55,15 @@ class BallisticModel():
 
         p_error = np.linalg.norm(p_data - p_pred, axis=0)
         d_error = d_data - d_pred
-        error = p(p_error, d_error)
-        assert error.shape == (len(samples),), f"error shape ({error.shape}) is not the same as samples ({len(samples)})"
-        return error
+        inliers = condition(p_error, d_error)
+        assert inliers.shape == (len(samples),), f"inliers shape ({inliers.shape}) is not the same as samples ({len(samples)})"
+        return inliers
 
 class Fitter:
-    def __init__(self, p, v_scale=1, p_scale=1, **kwargs):
-        self.p = p
-        self.v_scale = v_scale
-        self.p_scale = p_scale
-        self.kwargs = kwargs
+    def __init__(self, error_fct, optimizer='minimize', **optimizer_kwargs):
+        self.optimizer = optimizer
+        self.error_fct = error_fct
+        self.optimizer_kwargs = optimizer_kwargs
 
     def __call__(self, samples):
         T0 = samples[0].timestamp
@@ -75,15 +74,8 @@ class Fitter:
         points3D = Point3D([s.ball.center for s in samples])
         p_data = project_3D_to_2D(P, points3D)
         d_data = compute_length2D(K, RT, points3D, BALL_DIAMETER, points2D=p_data)
-        p_error = None
-        d_error = None
-        p0 = samples[0].ball.center
 
         def error(initial_condition):
-            p0 = Point3D(initial_condition[0:3])/self.p_scale
-            v0 = Point3D(initial_condition[3:6])/self.v_scale
-            initial_condition = p0.x, p0.y, p0.z, v0.x, v0.y, v0.z
-            nonlocal p_error, d_error
             model = BallisticModel(initial_condition, T0)
             points3D = model(timestamps)
 
@@ -91,19 +83,17 @@ class Fitter:
             p_error = np.linalg.norm(p_data - p_pred, axis=0)
 
             d_pred = compute_length2D(K, RT, points3D, BALL_DIAMETER, points2D=p_pred)
-            d_error = d_data - d_pred
+            d_error = np.abs(d_data - d_pred)
 
-            return self.p(p_error, d_error)
-            return p_error + np.linalg.norm(d_error, axis=0) # to delete
-            return (np.stack([p_error, d_error])*weights).flatten()
+            return self.error_fct(p_error, d_error)
 
-        p0 = samples[0].ball.center
-        v0 = (samples[-1].ball.center - samples[0].ball.center)/(samples[-1].timestamp - samples[0].timestamp)
-        p0 = p0*self.p_scale
-        v0 = v0*self.v_scale
-        v0.z = (samples[1].ball.center.z - samples[0].ball.center.z)/(samples[1].timestamp - samples[0].timestamp)
-        initial_guess = p0.x, p0.y, p0.z, v0.x, v0.y, v0.z
-        result = scipy.optimize.least_squares(error, initial_guess, **self.kwargs)
+        # initial guess computed from MSE solution of the 3D problem
+        A = np.hstack([np.tile(np.eye(3), (len(timestamps), 1)), np.vstack(np.eye(3)[np.newaxis]*(timestamps-T0)[...,np.newaxis, np.newaxis])])
+        b = np.vstack(points3D) - np.vstack(np.eye(3, 1, k=-2)[np.newaxis]*g*(timestamps-T0)[...,np.newaxis, np.newaxis]**2/2)
+        initial_guess = (np.linalg.inv(A.T@A)@A.T@b).flatten()
+        #return BallisticModel(initial_guess, T0)
+        result = getattr(scipy.optimize, self.optimizer)(error, initial_guess, **self.optimizer_kwargs)
+        result['initial_guess'] = initial_guess
         if not result.success:
             return None
         return BallisticModel(result['x'], T0)
@@ -116,26 +106,32 @@ repr_map = { # true, perd
 }
 
 class SlidingWindow:
-    def __init__(self, length, threshold, fitting_error_fct, acceptance_error_fct, min_inliers_ratio=.8, min_inliers=5, display=False, **kwargs):
-        self.length = length
+    def __init__(self, condition, min_inliers_ratio=.8, min_inliers=5, display=False, **kwargs):
         self.window = []
-        self.acceptance_error_fct = acceptance_error_fct
-        self.fitter = Fitter(p=fitting_error_fct, **kwargs)
-        self.threshold = threshold
+        self.condition = condition
+        self.fitter = Fitter(**kwargs)
         self.min_inliers_ratio = min_inliers_ratio    # min inliers ratio between first and last inliers
         self.min_inliers = min_inliers                # min inliers to consider the model valid
         self.popped = []
         self.stop = False
         self.display = display
         if self.display:
-            for i, label in enumerate(["normal", "no model", "not enough inliers", "too many outliers", "proposed model", "fewer inliers than previous model"]):
-                print(f"\x1b[3{i}m{label}\x1b[0m")
+            for i, label in enumerate([
+                "normal",
+                "no model",
+                "not enough inliers",
+                "too many outliers",
+                "proposed model",
+                "fewer inliers than previous model",
+                "first sample is not an inlier"
+            ]):
+                print(f"\x1b[3{i}m{i} - {label}\x1b[0m")
 
     def drop(self, count=1, callback=None):
         for i in range(count):
             sample = self.window.pop(0)
             if callback is not None:
-                callback(sample)
+                callback(i, sample)
             yield sample
             self.popped.append((sample.ball.state is BallState.FLYING, hasattr(sample.ball, 'model')))
 
@@ -145,7 +141,7 @@ class SlidingWindow:
                 f"\x1b[3{color}m" + \
                 "".join([" " + repr_map[k[0], False] for k in self.popped]) + \
                 "|" + \
-                " ".join([repr_map[s.ball.state == BallState.FLYING, i in inliers] for i, s in enumerate(self.window)]) + \
+                " ".join([repr_map[s.ball.state == BallState.FLYING, inliers[i] if i < len(inliers) else False] for i, s in enumerate(self.window)]) + \
                 "|" + \
                 "\x1b[0m"
             )
@@ -156,15 +152,19 @@ class SlidingWindow:
             self.print(color=1)
             return None
 
-        error = model.error(self.window, self.acceptance_error_fct)
-        inliers = np.where(error < self.threshold)[0]
-        if len(inliers) < self.min_inliers:
+        inliers = model.inliers(self.window, self.condition)
+        if sum(inliers) < self.min_inliers:
             self.print(inliers, color=2)
             return None
 
-        inliers_ratio = len(inliers)/(inliers[-1] - inliers[0] + 1)
+        np.max(np.where(model.inliers))+1
+        inliers_ratio = sum(inliers)/(np.ptp(np.where(inliers)) + 1)
         if inliers_ratio < self.min_inliers_ratio:
             self.print(inliers, color=3)
+            return None
+
+        if not inliers[0]:
+            self.print(inliers, color=6)
             return None
 
         model.inliers = inliers
@@ -173,7 +173,7 @@ class SlidingWindow:
 
     def __call__(self, gen):
         while True:
-            while len(self.window) < self.length:
+            while len(self.window) < self.min_inliers:
                 self.window.append(next(gen))
 
             # move window until model is found
@@ -188,16 +188,17 @@ class SlidingWindow:
                 self.window.append(next(gen))
                 new_model = self.fit()
                 if new_model is None:
-                    self.print([], color=2)
+                    self.print([], color=1)
                     break
                 if len(new_model.inliers) < len(model.inliers):
                     self.print(new_model.inliers, color=5)
                     break
+                self.print(new_model.inliers, color=4)
                 model = new_model
 
             self.print(model.inliers)
 
             # pop model data
-            callback = lambda s: setattr(s.ball, 'model', model)
-            yield from self.drop(model.inliers[-1]+1, callback=callback)
+            cb = lambda i, s: setattr(s.ball, 'model', model if model.inliers[i] else None)
+            yield from self.drop(np.max(np.where(model.inliers))+1, callback=cb)
 
