@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.optimize
 
+import cv2
 from calib3d import Point3D, Point2D, ProjectiveDrawer
 
 from deepsport_utilities.court import BALL_DIAMETER
@@ -95,27 +96,31 @@ def compute_length2D(K, RT, points3D, length, points2D=None):
 
 class Renderer():
     model = None
-    def __init__(self, f=25):
+    def __init__(self, f=25, thickness=2):
+        self.thickness = thickness
         self.f = f
-    def __call__(self, image, calib, sample=None):
-        if sample is None:
-            return image
-        if (model := getattr(sample.ball, 'model', None)) != self.model:
+    def __call__(self, timestamp, image, calib, sample=None):
+        if sample is not None and (model := getattr(sample.ball, 'model', None)) != self.model:
             self.model = model
-        if model:
-            points3D = sample.ball.model(np.linspace(model.T0, model.TN, int((model.TN - model.T0)*self.f/1000)))
+
+        # Draw model
+        if self.model and self.model.T0 <= timestamp <= self.model.TN:
+            num  = int((self.model.TN - self.model.T0)*self.f/1000)
+            points3D = self.model(np.linspace(self.model.T0, self.model.TN, num))
             ground3D = Point3D(points3D)
             ground3D.z = 0
-            pd = ProjectiveDrawer(calib, (255,255,0), thickness=3, segments=1)
-            pd.polylines(image, points3D)
-            pd.polylines(image, ground3D)
+            pd = ProjectiveDrawer(calib, (255,255,0), thickness=self.thickness, segments=1)
+            pd.polylines(image, points3D, lineType=cv2.LINE_AA)
+            pd.polylines(image, ground3D, lineType=cv2.LINE_AA)
             start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
             stop  = Point3D(np.vstack([points3D[:, -1], ground3D[:, -1]]).T)
-            pd.polylines(image, start)
-            pd.polylines(image, stop)
+            pd.polylines(image, start, lineType=cv2.LINE_AA)
+            pd.polylines(image, stop, lineType=cv2.LINE_AA)
 
         # Draw detected position
-        pd = ProjectiveDrawer(calib, (0,120,255), thickness=2, segments=1)
-        ground3D = Point3D(sample.ball.center.x, sample.ball.center.y, 0)
-        pd.polylines(image, Point3D([sample.ball.center, ground3D]), markersize=10)
+        if sample is not None:
+            pd = ProjectiveDrawer(calib, (0,120,255), thickness=self.thickness, segments=1)
+            ground3D = Point3D(sample.ball.center.x, sample.ball.center.y, 0)
+            pd.polylines(image, Point3D([sample.ball.center, ground3D]), markersize=10, lineType=cv2.LINE_AA)
+
         return image
