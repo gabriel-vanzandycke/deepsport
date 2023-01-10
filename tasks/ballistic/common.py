@@ -1,19 +1,20 @@
 import numpy as np
 import scipy.optimize
 
-from calib3d import Point3D, Point2D
+from calib3d import Point3D, Point2D, ProjectiveDrawer
 
 from deepsport_utilities.court import BALL_DIAMETER
 
 g = 9.81 * 100 /(1000*1000) # m/s² => cm/ms²
 
 class BallisticModel():
-    def __init__(self, initial_condition, T0):
+    def __init__(self, initial_condition, T0, TN=None):
         x0, y0, z0, vx0, vy0, vz0 = initial_condition
         self.p0 = Point3D(x0, y0, z0)
         self.v0 = Point3D(vx0, vy0, vz0)
         self.a0 = Point3D(0, 0, g)
         self.T0 = T0
+        self.TN = TN
 
     def __call__(self, t):
         t = t - self.T0
@@ -21,6 +22,16 @@ class BallisticModel():
 
 
 class Fitter:
+    """
+        Arguments:
+            inliers_condition (Callable): given a vector of position errors and
+                a vector of diameter errors, returns `True` for indices that
+                should be considered inliers.
+            error_fct (Callable): given a vector of position errors and a vector
+                of diameter errors, returns the scalar error to minimize.
+            optimizer (str): optimizer to use, member of `scipy.optimize`.
+            optimizer_kwargs (dict): optimizer keyword arguments.
+    """
     def __init__(self, inliers_condition, error_fct, optimizer='minimize', **optimizer_kwargs):
         self.optimizer = optimizer
         self.error_fct = error_fct
@@ -29,6 +40,7 @@ class Fitter:
 
     def __call__(self, samples):
         T0 = samples[0].timestamp
+        TN = samples[-1].timestamp
         P  = np.stack([s.calib.P for s in samples])
         RT = np.stack([np.hstack([s.calib.R, s.calib.T]) for s in samples])
         K  = np.stack([s.calib.K for s in samples])
@@ -59,7 +71,7 @@ class Fitter:
         result = getattr(scipy.optimize, self.optimizer)(error, initial_guess, **self.optimizer_kwargs)
         if not result.success:
             return None
-        model = BallisticModel(result['x'], T0)
+        model = BallisticModel(result['x'], T0, TN)
         model.inliers = self.inliers_condition(p_error, d_error)
         model.indices = np.arange(np.min(np.where(model.inliers)), np.max(np.where(model.inliers))+1) if np.any(model.inliers) else np.array([])
 
@@ -80,3 +92,30 @@ def compute_length2D(K, RT, points3D, length, points2D=None):
     answer = np.linalg.norm(points2D - Point2D(points2D_H) * np.sign(points2D_H[2]), axis=0)
     return answer
 
+
+class Renderer():
+    model = None
+    def __init__(self, f=25):
+        self.f = f
+    def __call__(self, image, calib, sample=None):
+        if sample is None:
+            return image
+        if (model := getattr(sample.ball, 'model', None)) != self.model:
+            self.model = model
+        if model:
+            points3D = sample.ball.model(np.linspace(model.T0, model.TN, int((model.TN - model.T0)*self.f/1000)))
+            ground3D = Point3D(points3D)
+            ground3D.z = 0
+            pd = ProjectiveDrawer(calib, (255,255,0), thickness=3, segments=1)
+            pd.polylines(image, points3D)
+            pd.polylines(image, ground3D)
+            start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
+            stop  = Point3D(np.vstack([points3D[:, -1], ground3D[:, -1]]).T)
+            pd.polylines(image, start)
+            pd.polylines(image, stop)
+
+        # Draw detected position
+        pd = ProjectiveDrawer(calib, (0,120,255), thickness=2, segments=1)
+        ground3D = Point3D(sample.ball.center.x, sample.ball.center.y, 0)
+        pd.polylines(image, Point3D([sample.ball.center, ground3D]), markersize=10)
+        return image

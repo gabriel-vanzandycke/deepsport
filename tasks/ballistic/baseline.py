@@ -19,9 +19,6 @@ class SlidingWindow:
         detections using a two terms error: a position error in the image space
         (in pixels), and a diameter error in the image space (in pixels).
         Arguments:
-            inliers_condition (Callable): given a vector of position errors and
-                a vector of diameter errors, returns `True` for indices that
-                should be considered inliers.
             min_distance (int): trajectories shorter than `min_distance` (in cm)
                 are discarded.
             max_outliers_ratio (float): trajectories with more than
@@ -32,13 +29,13 @@ class SlidingWindow:
             display (bool): if `True`, display the trajectory in the terminal.
             fitter_kwargs (dict): keyword arguments passed to model `Fitter`.
     """
-    def __init__(self, inliers_condition, min_distance=50, max_outliers_ratio=.8, min_inliers=5, display=False, **fitter_kwargs):
+    def __init__(self, min_distance=50, max_outliers_ratio=.8, min_inliers=5, display=False, **fitter_kwargs):
         self.window = []
-        self.fitter = Fitter(inliers_condition=inliers_condition, **fitter_kwargs)
+        self.fitter = Fitter(**fitter_kwargs)
         self.max_outliers_ratio = max_outliers_ratio
         self.min_inliers = min_inliers
         self.min_distance = min_distance
-        self.popped = []
+        self.popped = 0
         self.display = display
         if self.display:
             for i, label in enumerate([
@@ -54,23 +51,20 @@ class SlidingWindow:
             ]):
                 print(f"\x1b[3{i}m{i} - {label}\x1b[0m")
 
-    def drop(self, count=1, callback=None):
+    def pop(self, count=1, callback=None):
         for i in range(count):
             sample = self.window.pop(0)
             if callback is not None:
                 callback(i, sample)
             yield sample
-            self.popped.append((sample.ball.state is BallState.FLYING, hasattr(sample.ball, 'model')))
+            self.popped += 1
 
     def print(self, inliers=[], color=0):
         if self.display:
             print(
-                "".join([" " + repr_map[k[0], k[1]] for k in self.popped]) + \
-                "|" + \
-                f"\x1b[3{color}m" + \
+                "  "*self.popped + f"|\x1b[3{color}m" + \
                 " ".join([repr_map[s.ball.state == BallState.FLYING, inliers[i] if i < len(inliers) else False] for i, s in enumerate(self.window)]) + \
-                "\x1b[0m" + \
-                "|"
+                "\x1b[0m|"
             )
 
     def fit(self):
@@ -105,6 +99,7 @@ class SlidingWindow:
             return None
 
         self.print(model.inliers, color=4)
+        model.TN = self.window[max(np.where(inliers)[0])].timestamp
         return model
 
 
@@ -117,7 +112,7 @@ class SlidingWindow:
 
                 # move window until a model is found
                 while (model := self.fit()) is None:
-                    yield from self.drop(1)
+                    yield from self.pop(1)
                     self.window.append(next(gen))
 
                 # grow window while model fits data
@@ -138,10 +133,10 @@ class SlidingWindow:
             except StopIteration:
                 if model:
                     cb = lambda i, s: setattr(s.ball, 'model', model if i in model.indices else None)
-                    yield from self.drop(np.max(np.where(model.inliers))+1, callback=cb)
-                yield from self.drop(len(self.window))
+                    yield from self.pop(np.max(np.where(model.inliers))+1, callback=cb)
+                yield from self.pop(len(self.window))
                 return
 
             # pop model data
             cb = lambda i, s: setattr(s.ball, 'model', model if i in model.indices else None)
-            yield from self.drop(np.max(np.where(model.inliers))+1, callback=cb)
+            yield from self.pop(np.max(np.where(model.inliers))+1, callback=cb)
