@@ -8,3 +8,6 @@ ballistic-raw-sequences
 *.out
 *.log
 wandb
+*.pickle
+.vscode
+*.mp4
