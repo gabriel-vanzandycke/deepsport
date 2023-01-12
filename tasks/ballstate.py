@@ -84,7 +84,7 @@ BALLSEG_THRESHOLD = 0.6
 class AddBallDetectionsTransform(Transform):
     def __init__(self, dataset_folder, xy_inverted=False):
         self.dataset_folder = dataset_folder
-        self.database_path = os.path.join(dataset_folder, "{}/{}/balls3d_new.pickle")
+        self.database_path = os.path.join(dataset_folder, "{}/{}/balls3d_new.pickle") # file created by `process_raw_sequences.py` script
         def factory(args):
             arena_label, game_id = args
             filename = self.database_path.format(arena_label, game_id)
@@ -100,12 +100,12 @@ class AddBallDetectionsTransform(Transform):
         self.max_distance = 28 # pixels
         self.xy_inverted = xy_inverted
 
-    def extract_pseudo_annotation(self, data):
-        camera    = np.array([c.camera_idx for c in data])
-        models    = np.array([c.model for c in data])
-        points    = Point2D([c.point for c in data])
-        values    = np.array([c.value for c in data])
-        threshold = np.array([c.value > self.detection_thresholds[c.model] for c in data])
+    def extract_pseudo_annotation(self, detections):
+        camera    = np.array([d.camera_idx for d in detections])
+        models    = np.array([d.model for d in detections])
+        points    = Point2D([d.point for d in detections])
+        values    = np.array([d.value for d in detections])
+        threshold = np.array([d.value > self.detection_thresholds[d.model] for d in detections])
 
         camera_cond      = camera[np.newaxis, :] == camera[:, np.newaxis]
         corroborate_cond = models[np.newaxis, :] != models[:, np.newaxis]
@@ -116,17 +116,17 @@ class AddBallDetectionsTransform(Transform):
         values_matrix_filtered = np.triu(camera_cond * corroborate_cond * proximity_cond * threshold_cond * values_matrix)
         i1, i2 = np.unravel_index(values_matrix_filtered.argmax(), values_matrix_filtered.shape)
         if i1 != i2: # means two different candidate were found
-            point2D = Point2D(np.mean([data[i1].point, data[i2].point], axis=0))
-            pseudo_annotation = BallDetection("pseudo-annotation", data[i1].camera_idx, point2D, value=values_matrix[i1, i2])
+            point2D = Point2D(np.mean([detections[i1].point, detections[i2].point], axis=0))
+            pseudo_annotation = BallDetection("pseudo-annotation", detections[i1].camera_idx, point2D, value=values_matrix[i1, i2])
             #for i in sorted([i1, i2], reverse=True): # safe delete using decreasing indices
-            #    del data[i]
+            #    del detections[i]
             return pseudo_annotation
         return None
 
     def __call__(self, instant_key, instant):
         sequence_frame_index = instant.frame_indices[0] # use index from first camera by default
-        data = self.database[instant.arena_label, instant.game_id].get(sequence_frame_index, [])
-        if data:
+        detections = self.database[instant.arena_label, instant.game_id].get(sequence_frame_index, [])
+        if detections:
             point = lambda point: Point2D(point.y, point.x) if self.xy_inverted else point
             unpack = lambda detection: Ball({
                 "origin": detection.model,
@@ -136,11 +136,11 @@ class AddBallDetectionsTransform(Transform):
                 "state": instant.ball_state,
                 "value": detection.value
             })
-            pseudo_annotation = self.extract_pseudo_annotation(data)
+            pseudo_annotation = self.extract_pseudo_annotation(detections)
             if pseudo_annotation is not None:
                 instant.ball = unpack(pseudo_annotation)
                 instant.annotations.extend([instant.ball])
-            instant.detections.extend(map(unpack, data))
+            instant.detections.extend(map(unpack, detections))
         return instant
 
 

@@ -102,11 +102,10 @@ class SlidingWindow:
         model.TN = self.window[max(np.where(inliers)[0])].timestamp
         return model
 
-
     def __call__(self, gen):
         while True:
             try:
-                model = None
+                model = None # required if `next(gen)` raises `StopIteration`
                 while len(self.window) < self.min_inliers:
                     self.window.append(next(gen))
 
