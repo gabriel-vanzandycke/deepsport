@@ -12,7 +12,7 @@ from dataset_utilities.ds.raw_sequences_dataset import BallState
 from mlworkflow import TransformedDataset, PickledDataset
 from experimentator.utils import find
 
-load_dotenv("/home/gva/repositories/deepsport/.env")
+load_dotenv()
 
 parser = argparse.ArgumentParser(description="""From the public ballistic-raw-sequences dataset, creates a dataset of
 ball crops. Balls state is set to `BallState.FLYING` as the public dataset only
