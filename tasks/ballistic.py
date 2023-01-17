@@ -1,8 +1,10 @@
+from enum import IntEnum
+
+from calib3d import Point3D, Point2D, ProjectiveDrawer
+import cv2
 import numpy as np
 import scipy.optimize
 
-import cv2
-from calib3d import Point3D, Point2D, ProjectiveDrawer
 
 from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.ds.instants_dataset.instants_dataset import BallState
@@ -19,6 +21,19 @@ repr_map = { # true, perd
     (False, False): ' ',
 }
 
+class ModelFit(IntEnum):
+    """ Model fitting status.
+    """
+    NORMAL = 0
+    NO_MODEL = 1
+    NOT_ENOUGH_INLIERS = 2
+    TOO_MANY_OUTLIERS = 3
+    PROPOSED_MODEL = 4
+    LESS_INLIERS = 5
+    FIRST_SAMPLE_IS_NOT_AN_INLIER = 6
+    CURVE_LENGTH_IS_TOO_SHORT = 7
+    BALL_BELOW_THE_GROUND = 8
+
 class SlidingWindow:
     """ Detect ballistic motion by sliding a window over successive ball
         detections using a two terms error: a position error in the image space
@@ -34,7 +49,7 @@ class SlidingWindow:
             display (bool): if `True`, display the trajectory in the terminal.
             fitter_kwargs (dict): keyword arguments passed to model `Fitter`.
     """
-    def __init__(self, min_distance=50, max_outliers_ratio=.8, min_inliers=5, display=False, **fitter_kwargs):
+    def __init__(self, min_distance=50, max_outliers_ratio=.8, min_inliers=5, display=False, window_size=None, **fitter_kwargs):
         self.window = []
         self.fitter = Fitter(**fitter_kwargs)
         self.max_outliers_ratio = max_outliers_ratio
@@ -42,6 +57,7 @@ class SlidingWindow:
         self.min_distance = min_distance
         self.popped = 0
         self.display = display
+        self.window_size = window_size or min_inliers
         if self.display:
             for i, label in enumerate([
                 "normal",
@@ -80,10 +96,11 @@ class SlidingWindow:
         raise NotImplementedError
 
     def __call__(self, gen):
-        while True:
+        interrupt = False
+        while not interrupt:
             try:
                 model = None # required if `next(gen)` raises `StopIteration`
-                while len(self.window) < self.min_inliers:
+                while len(self.window) < self.window_size:
                     self.window.append(next(gen))
 
                 # move window until a model is found
@@ -96,86 +113,88 @@ class SlidingWindow:
                     self.window.append(next(gen))
                     new_model = self.fit()
                     if new_model is None:
-                        self.print([], color=1)
                         break
                     if sum(new_model.inliers) < sum(model.inliers):
-                        self.print(new_model.inliers, color=5)
+                        self.print(new_model.inliers, color=ModelFit.LESS_INLIERS)
                         break
-                    self.print(new_model.inliers, color=4)
                     model = new_model
 
-                self.print(model.inliers)
+                self.print(model.inliers, color=ModelFit.PROPOSED_MODEL)
 
             except StopIteration:
-                if model:
-                    cb = lambda i, s: setattr(s.ball, 'model', model if i in model.indices else None)
-                    yield from self.pop(np.max(np.where(model.inliers))+1, callback=cb)
-                yield from self.pop(len(self.window))
-                return
+                interrupt = True
 
             # pop model data
-            cb = lambda i, s: setattr(s.ball, 'model', model if i in model.indices else None)
-            yield from self.pop(np.max(np.where(model.inliers))+1, callback=cb)
+            if model: # required in case `next(gen)` raises `StopIteration`
+                cb = lambda i, s: setattr(s.ball, 'model', model if i in model.indices else None)
+                yield from self.pop(np.max(np.where(model.inliers))+1, callback=cb)
 
+        yield from self.pop(len(self.window))
 
 class NaiveSlidingWindow(SlidingWindow):
     def fit(self):
         model = self.fitter(self.window)
         if model is None:
-            self.print(color=1)
+            self.print(color=ModelFit.NO_MODEL)
             return None
 
         inliers = model.inliers
         if sum(inliers) < self.min_inliers:
-            self.print(inliers, color=2)
+            self.print(inliers, color=ModelFit.NOT_ENOUGH_INLIERS)
             return None
 
         if self.outliers_ratio(inliers) > self.max_outliers_ratio:
-            self.print(inliers, color=3)
+            self.print(inliers, color=ModelFit.TOO_MANY_OUTLIERS)
             return None
 
         if not inliers[0]:
-            self.print(inliers, color=6)
+            self.print(inliers, color=ModelFit.FIRST_SAMPLE_NOT_INLIER)
             return None
 
         timestamps = np.array([s.timestamp for s in self.window])[model.indices]
         points3D = model(timestamps)
         if points3D.z.max() > 0: # ball is under the ground (z points down)
-            self.print(model.inliers, color=8)
+            self.print(model.inliers, color=ModelFit.BALL_BELOW_THE_GROUND)
             return None
 
         distances = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
         if distances.sum() < self.min_distance:
-            self.print(model.inliers, color=7)
+            self.print(model.inliers, color=ModelFit.CURVE_LENGTH_IS_TOO_SHORT)
             return None
 
-        self.print(inliers, color=4)
         model.TN = self.window[max(np.where(inliers)[0])].timestamp
         return model
+
+
+# baseline = NaiveSlidingWindow(min_distance=75, min_inliers=7, max_outliers_ratio=.25, display=True,
+#                    error_fct=lambda p_error, d_error: np.linalg.norm(p_error) + 10*np.linalg.norm(d_error),
+#                    inliers_condition=lambda p_error, d_error: p_error < np.hstack([[3]*3, [5]*(len(p_error)-6), [2]*3]), tol=.1)
 
 
 class BallStateSlidingWindow(SlidingWindow):
     def fit(self):
         flyings = [s.ball.pred_state == BallState.FLYING for s in self.window]
         if sum(flyings) < self.min_inliers:
-            self.print(flyings, color=2)
+            self.print(flyings, color=ModelFit.NOT_ENOUGH_INLIERS)
             return None
 
         if self.outliers_ratio(flyings) > self.max_outliers_ratio:
-            self.print(flyings, color=3)
+            self.print(flyings, color=ModelFit.TOO_MANY_OUTLIERS)
             return None
 
         model = self.fitter(self.window)
         if model is None:
-            self.print(flyings, color=1)
+            self.print(flyings, color=ModelFit.NO_MODEL)
             return None
 
         inliers = model.inliers
+        if sum(inliers) < self.min_inliers:
+            self.print(flyings, color=ModelFit.NOT_ENOUGH_INLIERS)
+            return None
         # if not inliers[0]:
-        #     self.print(flyings, color=6)
+        #     self.print(flyings, color=ModelFit.FIRST_SAMPLE_NOT_INLIER)
         #     return None
 
-        self.print(flyings, color=4)
         model.TN = self.window[max(np.where(inliers)[0])].timestamp
         return model
 
@@ -265,15 +284,19 @@ def compute_length2D(K, RT, points3D, length, points2D=None):
     answer = np.linalg.norm(points2D - Point2D(points2D_H) * np.sign(points2D_H[2]), axis=0)
     return answer
 
+import matplotlib.pyplot as plt
 
 class Renderer():
     model = None
-    def __init__(self, f=25, thickness=2):
+    def __init__(self, f=25, thickness=2, display=True):
         self.thickness = thickness
         self.f = f
+        self.display = display
     def __call__(self, timestamp, image, calib, sample=None):
+        new_model = False
         if sample is not None and (model := getattr(sample.ball, 'model', None)) != self.model:
             self.model = model
+            new_model = True
 
         # Draw model
         if self.model and self.model.T0 <= timestamp <= self.model.TN:
@@ -294,5 +317,12 @@ class Renderer():
             pd = ProjectiveDrawer(calib, (0,120,255), thickness=self.thickness, segments=1)
             ground3D = Point3D(sample.ball.center.x, sample.ball.center.y, 0)
             pd.polylines(image, Point3D([sample.ball.center, ground3D]), markersize=10, lineType=cv2.LINE_AA)
+
+        if new_model:
+            w = image.shape[1]
+            h = int(w/16*9)
+            offset = 320
+            plt.imshow(image[offset:offset+h, 0:w])
+            plt.show()
 
         return image
