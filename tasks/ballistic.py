@@ -30,7 +30,7 @@ class ModelFit(IntEnum):
     TOO_MANY_OUTLIERS = 3
     PROPOSED_MODEL = 4
     LESS_INLIERS = 5
-    FIRST_SAMPLE_IS_NOT_AN_INLIER = 6
+    FIRST_SAMPLE_NOT_INLIER = 6
     CURVE_LENGTH_IS_TOO_SHORT = 7
     BALL_BELOW_THE_GROUND = 8
 
@@ -288,15 +288,25 @@ import matplotlib.pyplot as plt
 
 class Renderer():
     model = None
+    canvas = None
     def __init__(self, f=25, thickness=2, display=True):
         self.thickness = thickness
         self.f = f
         self.display = display
     def __call__(self, timestamp, image, calib, sample=None):
         new_model = False
+
+        # If new model starts or existing model has ended
         if sample is not None and (model := getattr(sample.ball, 'model', None)) != self.model:
             self.model = model
-            new_model = True
+            new_model = model is not None
+            if model is None: # display model that just ended
+                w = self.canvas.shape[1]
+                h = int(w/16*9)
+                offset = 320
+                plt.imshow(self.canvas[offset:offset+h, 0:w])
+                plt.show()
+                self.canvas = None
 
         # Draw model
         if self.model and self.model.T0 <= timestamp <= self.model.TN:
@@ -317,12 +327,8 @@ class Renderer():
             pd = ProjectiveDrawer(calib, (0,120,255), thickness=self.thickness, segments=1)
             ground3D = Point3D(sample.ball.center.x, sample.ball.center.y, 0)
             pd.polylines(image, Point3D([sample.ball.center, ground3D]), markersize=10, lineType=cv2.LINE_AA)
-
-        if new_model:
-            w = image.shape[1]
-            h = int(w/16*9)
-            offset = 320
-            plt.imshow(image[offset:offset+h, 0:w])
-            plt.show()
+            if new_model: # use current image as canvas
+                self.canvas = image.copy()
+                pd.polylines(self.canvas, Point3D([sample.ball.center, ground3D]), markersize=10, lineType=cv2.LINE_AA)
 
         return image
