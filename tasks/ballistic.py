@@ -1,10 +1,12 @@
+from dataclasses import dataclass
 from enum import IntEnum
+import functools
+from typing import Iterable
 
-from calib3d import Point3D, Point2D, ProjectiveDrawer
+from calib3d import Calib, Point3D, Point2D, ProjectiveDrawer
 import cv2
 import numpy as np
 import scipy.optimize
-
 
 from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.ds.instants_dataset.instants_dataset import BallState
@@ -88,7 +90,7 @@ class SlidingWindow:
         if self.display:
             print(
                 "  "*self.popped + f"|\x1b[3{color}m" + \
-                " ".join([repr_map[s.ball.state == BallState.FLYING, inliers[i] if i < len(inliers) else False] for i, s in enumerate(self.window)]) + \
+                " ".join([repr_map[s.true_state == BallState.FLYING, inliers[i] if i < len(inliers) else False] for i, s in enumerate(self.window)]) + \
                 "\x1b[0m|"
             )
 
@@ -96,8 +98,8 @@ class SlidingWindow:
         raise NotImplementedError
 
     def __call__(self, gen):
-        interrupt = False
-        while not interrupt:
+        empty = False
+        while not empty:
             try:
                 model = None # required if `next(gen)` raises `StopIteration`
                 while len(self.window) < self.window_size:
@@ -122,7 +124,7 @@ class SlidingWindow:
                 self.print(model.inliers, color=ModelFit.PROPOSED_MODEL)
 
             except StopIteration:
-                interrupt = True
+                empty = True # empty generator raises `StopIteration`
 
             # pop model data
             if model: # required in case `next(gen)` raises `StopIteration`
@@ -171,9 +173,76 @@ class NaiveSlidingWindow(SlidingWindow):
 #                    inliers_condition=lambda p_error, d_error: p_error < np.hstack([[3]*3, [5]*(len(p_error)-6), [2]*3]), tol=.1)
 
 
+@dataclass
+@functools.total_ordering
+class Trajectory:
+    T0: int
+    TN: int
+    positions: np.ndarray
+    def __lt__(self, other): # self < other
+        return self.TN < other.T0
+    def __gt__(self, other): # self > other
+        return self.T0 > other.TN
+    def __eq__(self, other):
+        raise NotImplementedError
+    def __sub__(self, other):
+        return min(self.TN, other.TN) - max(self.T0, other.T0)
+
+class MatchTrajectories:
+    def __init__(self, a_margin=0):
+        self.TP = 0
+        self.FP = 0
+        self.FN = 0
+        self.dist_T0 = []
+        self.dist_TN = []
+        self.a_margin = a_margin
+
+    def update_metrics(self, p: Trajectory, a: Trajectory):
+        self.dist_T0.append(p.T0 - (a.T0 - self.a_margin))
+        self.dist_TN.append(p.TN - (a.TN + self.a_margin))
+
+    def __call__(self, pgen, agen):
+        try:
+            p = next(pgen)
+            a = next(agen)
+            while True:
+                while a < p:
+                    self.FN += 1
+                    a = next(agen)
+                while p < a:
+                    self.FP += 1
+                    p = next(pgen)
+                if a.TN in range(p.T0, p.TN):
+                    while (a2 := next(agen)) - p > a - p:
+                        self.FN += 1
+                        a = a2
+                    self.TP += 1
+                    self.update_metrics(p, a)
+                    a = a2 # required if while loop is never entered
+                else: # if p.TN in range(a.T0, a.TN):
+                    while a - (p2 := next(pgen)) > a - p:
+                        self.FP += 1
+                        p = p2
+                    self.TP += 1
+                    self.update_metrics(p, a)
+                    p = p2 # required if while loop is never entered
+        except StopIteration:
+            # Consume remaining trajectories
+            try:
+                while (p := next(pgen)):
+                    self.FP += 1
+            except StopIteration:
+                pass
+            try:
+                while (a := next(agen)):
+                    self.FN += 1
+            except StopIteration:
+                pass
+
+
 class BallStateSlidingWindow(SlidingWindow):
     def fit(self):
-        flyings = [s.ball.pred_state == BallState.FLYING for s in self.window]
+        flyings = [s.ball.state == BallState.FLYING for s in self.window]
         if sum(flyings) < self.min_inliers:
             self.print(flyings, color=ModelFit.NOT_ENOUGH_INLIERS)
             return None
