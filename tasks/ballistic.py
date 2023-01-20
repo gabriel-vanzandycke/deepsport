@@ -207,7 +207,7 @@ def extract_annotated_trajectories(gen):
             trajectory.append(sample)
         else:
             if trajectory:
-                ts = lambda s: s.timestamps[s.ball.camera if getattr(s, 'ball') else 0]
+                ts = lambda s: getattr(s, 'timestamp',  s.timestamps[0])
                 yield Trajectory(ts(trajectory[0]), ts(trajectory[-1]), trajectory)
             trajectory = []
 
@@ -217,7 +217,7 @@ def extract_predicted_trajectories(gen):
     for sample in gen:
         if (new_model := getattr(sample.ball, 'model', None)) != model:
             if trajectory:
-                yield Trajectory(trajectory[0].timestamp, trajectory[-1].timestamp, np.array([s.ball.center for s in trajectory]))
+                yield Trajectory(trajectory[0].timestamp, trajectory[-1].timestamp, trajectory)
             trajectory = []
             model = new_model
         if model is not None:
@@ -238,7 +238,8 @@ class Trajectory:
         raise NotImplementedError
     def __sub__(self, other):
         return min(self.TN, other.TN) - max(self.T0, other.T0)
-
+    def __getitem__(self, i):
+        return self.samples[i]
 
 class MatchTrajectories:
     def __init__(self, a_margin=0, TP_cb=None, FP_cb=None, FN_cb=None):

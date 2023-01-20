@@ -22,6 +22,8 @@ ds = PickledDataset(find("new4_ballpos_dataset.pickle"))
 dds = FilteredDataset(ds, lambda k,v: len([d for d in v.ball_detections if d.origin == 'ballseg']) > 0)
 def set_ball(key, item):
     item.ball = max([d for d in item.ball_detections if d.origin == 'ballseg'], key=lambda d: d.value)
+    item.timestamp = item.timestamps[item.ball.camera]
+    item.calib = item.calibs[item.ball.camera]
     return item
 dds = TransformedDataset(dds, [set_ball])
 
