@@ -3,7 +3,7 @@ from enum import IntEnum
 import functools
 from typing import Iterable
 
-from calib3d import Calib, Point3D, Point2D, ProjectiveDrawer
+from calib3d import Point3D, Point2D, ProjectiveDrawer
 import cv2
 import numpy as np
 import scipy.optimize
@@ -167,105 +167,6 @@ class NaiveSlidingWindow(SlidingWindow):
         model.TN = self.window[max(np.where(inliers)[0])].timestamp
         return model
 
-
-# baseline = NaiveSlidingWindow(min_distance=75, min_inliers=7, max_outliers_ratio=.25, display=True,
-#                    error_fct=lambda p_error, d_error: np.linalg.norm(p_error) + 10*np.linalg.norm(d_error),
-#                    inliers_condition=lambda p_error, d_error: p_error < np.hstack([[3]*3, [5]*(len(p_error)-6), [2]*3]), tol=.1)
-
-
-def extract_annotated_trajectories(gen):
-    trajectory = []
-    for sample in gen:
-        if sample:
-            if sample["ball_state"] == BallState.FLYING:
-                trajectory.append(sample)
-            else:
-                if trajectory:
-                    ts = lambda s: s["timestamps"][s['ball'].camera] if 'ball' in s else s['timestamps'][0]
-                    yield Trajectory(ts(trajectory[0]), ts(trajectory[-1]), np.array([s["ball"].center if 'ball' in s else Point3D(np.nan, np.nan, np.nan) for s in trajectory]))
-                trajectory = []
-
-def extract_predicted_trajectories(gen):
-    model = None
-    trajectory = []
-    for sample in gen:
-        if sample:
-            if (new_model := getattr(sample.ball, 'model', None)) != model:
-                yield Trajectory(trajectory[0].timestamp, trajectory[-1].timestamp, np.array([s.ball.center for s in trajectory]))
-                trajectory = []
-                model = new_model
-            trajectory.append(sample)
-
-
-@dataclass
-@functools.total_ordering
-class Trajectory:
-    T0: int
-    TN: int
-    positions: np.ndarray
-    def __lt__(self, other): # self < other
-        return self.TN < other.T0
-    def __gt__(self, other): # self > other
-        return self.T0 > other.TN
-    def __eq__(self, other):
-        raise NotImplementedError
-    def __sub__(self, other):
-        return min(self.TN, other.TN) - max(self.T0, other.T0)
-
-class MatchTrajectories:
-    def __init__(self, a_margin=0):
-        self.TP = 0
-        self.FP = 0
-        self.FN = 0
-        self.dist_T0 = []
-        self.dist_TN = []
-        self.a_margin = a_margin
-
-    def update_metrics(self, p: Trajectory, a: Trajectory):
-        self.dist_T0.append(p.T0 - (a.T0 - self.a_margin))
-        self.dist_TN.append(p.TN - (a.TN + self.a_margin))
-
-    def __call__(self, pgen, agen):
-        try:
-            p = next(pgen)
-            a = next(agen)
-            while True:
-                while a < p:
-                    self.FN += 1
-                    a = next(agen)
-                while p < a:
-                    self.FP += 1
-                    p = next(pgen)
-                if a.TN in range(p.T0, p.TN+1):
-                    while (a2 := next(agen)) - p > a - p:
-                        self.FN += 1
-                        a = a2
-                    self.TP += 1
-                    self.update_metrics(p, a)
-                    a = a2 # required if while loop is never entered
-                elif p.TN in range(a.T0, a.TN+1):
-                    while a - (p2 := next(pgen)) > a - p:
-                        self.FP += 1
-                        p = p2
-                    self.TP += 1
-                    self.update_metrics(p, a)
-                    p = p2 # required if while loop is never entered
-                else:
-                    raise ValueError(f"p={p} and a={a} do not overlap")
-        except StopIteration:
-            # Consume remaining trajectories
-            try:
-                while (p := next(pgen)):
-                    self.FP += 1
-            except StopIteration:
-                pass
-            try:
-                while (a := next(agen)):
-                    self.FN += 1
-            except StopIteration:
-                pass
-
-
 class BallStateSlidingWindow(SlidingWindow):
     def fit(self):
         flyings = [s.ball.state == BallState.FLYING for s in self.window]
@@ -292,6 +193,118 @@ class BallStateSlidingWindow(SlidingWindow):
 
         model.TN = self.window[max(np.where(inliers)[0])].timestamp
         return model
+
+
+# baseline = NaiveSlidingWindow(min_distance=75, min_inliers=7, max_outliers_ratio=.25, display=True,
+#                    error_fct=lambda p_error, d_error: np.linalg.norm(p_error) + 10*np.linalg.norm(d_error),
+#                    inliers_condition=lambda p_error, d_error: p_error < np.hstack([[3]*3, [5]*(len(p_error)-6), [2]*3]), tol=.1)
+
+
+def extract_annotated_trajectories(gen):
+    trajectory = []
+    for sample in gen:
+        if sample.ball_state == BallState.FLYING:
+            trajectory.append(sample)
+        else:
+            if trajectory:
+                ts = lambda s: s.timestamps[s.ball.camera if getattr(s, 'ball') else 0]
+                yield Trajectory(ts(trajectory[0]), ts(trajectory[-1]), trajectory)
+            trajectory = []
+
+def extract_predicted_trajectories(gen):
+    model = None
+    trajectory = []
+    for sample in gen:
+        if (new_model := getattr(sample.ball, 'model', None)) != model:
+            if trajectory:
+                yield Trajectory(trajectory[0].timestamp, trajectory[-1].timestamp, np.array([s.ball.center for s in trajectory]))
+            trajectory = []
+            model = new_model
+        if model is not None:
+            trajectory.append(sample)
+
+
+@dataclass
+@functools.total_ordering
+class Trajectory:
+    T0: int
+    TN: int
+    samples: Iterable[None]
+    def __lt__(self, other): # self < other
+        return self.TN < other.T0
+    def __gt__(self, other): # self > other
+        return self.T0 > other.TN
+    def __eq__(self, other):
+        raise NotImplementedError
+    def __sub__(self, other):
+        return min(self.TN, other.TN) - max(self.T0, other.T0)
+
+
+class MatchTrajectories:
+    def __init__(self, a_margin=0, TP_cb=None, FP_cb=None, FN_cb=None):
+        self.TP = []
+        self.FP = []
+        self.FN = []
+        self.dist_T0 = []
+        self.dist_TN = []
+        self.TP_cb = TP_cb
+        self.FP_cb = FP_cb
+        self.FN_cb = FN_cb
+        self.a_margin = a_margin
+
+    def update_metrics(self, p: Trajectory, a: Trajectory):
+        self.dist_T0.append(p.T0 - (a.T0 - self.a_margin))
+        self.dist_TN.append(p.TN - (a.TN + self.a_margin))
+
+    def __call__(self, pgen, agen):
+        try:
+            p = next(pgen)
+            a = next(agen)
+            while True:
+                while a < p:
+                    self.FN.append(a)
+                    if self.FN_cb: self.FN_cb(a)
+                    a = next(agen)
+                while p < a:
+                    self.FP.append(p)
+                    if self.FP_cb: self.FP_cb(p)
+                    p = next(pgen)
+                if a.TN in range(p.T0, p.TN+1):
+                    while (a2 := next(agen)) - p > a - p:
+                        self.FN.append(a)
+                        if self.FN_cb: self.FN_cb(a)
+                        a = a2
+                    self.TP.append((a, p))
+                    if self.TP_cb: self.TP_cb(a, p)
+                    self.update_metrics(p, a)
+                    a = a2 # required for last evaluation of while condition
+                elif p.TN in range(a.T0, a.TN+1):
+                    while a - (p2 := next(pgen)) > a - p:
+                        self.FP.append(p)
+                        if self.FP_cb: self.FP_cb(p)
+                        p = p2
+                    self.TP.append((a, p))
+                    if self.TP_cb: self.TP_cb(a, p)
+                    self.update_metrics(p, a)
+                    p = p2 # required for last evaluation of while condition
+                else:
+                    pass # no match, move-on to next annotated trajectory
+        except StopIteration:
+            # Consume remaining trajectories
+            try:
+                while (p := next(pgen)):
+                    self.FP.append(p)
+                    if self.FP_cb: self.FP_cb(p)
+            except StopIteration:
+                pass
+            try:
+                while (a := next(agen)):
+                    self.FN.append(a)
+                    if self.FN_cb: self.FN_cb(a)
+            except StopIteration:
+                pass
+
+
 
 
 class BallisticModel():
@@ -395,13 +408,13 @@ class Renderer():
         if sample is not None and (model := getattr(sample.ball, 'model', None)) != self.model:
             self.model = model
             new_model = model is not None
-            if model is None: # display model that just ended
+            if model is None and self.display: # display model that just ended
                 w = self.canvas.shape[1]
                 h = int(w/16*9)
                 offset = 320
-                plt.imshow(self.canvas[offset:offset+h, 0:w])
-                plt.show()
-                self.canvas = None
+                #plt.imshow(self.canvas[offset:offset+h, 0:w])
+                #plt.show()
+                #self.canvas = None
 
         # Draw model
         if self.model and self.model.T0 <= timestamp <= self.model.TN:
