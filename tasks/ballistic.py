@@ -173,6 +173,30 @@ class NaiveSlidingWindow(SlidingWindow):
 #                    inliers_condition=lambda p_error, d_error: p_error < np.hstack([[3]*3, [5]*(len(p_error)-6), [2]*3]), tol=.1)
 
 
+def extract_annotated_trajectories(gen):
+    trajectory = []
+    for sample in gen:
+        if sample:
+            if sample["ball_state"] == BallState.FLYING:
+                trajectory.append(sample)
+            else:
+                if trajectory:
+                    ts = lambda s: s["timestamps"][s['ball'].camera] if 'ball' in s else s['timestamps'][0]
+                    yield Trajectory(ts(trajectory[0]), ts(trajectory[-1]), np.array([s["ball"].center if 'ball' in s else Point3D(np.nan, np.nan, np.nan) for s in trajectory]))
+                trajectory = []
+
+def extract_predicted_trajectories(gen):
+    model = None
+    trajectory = []
+    for sample in gen:
+        if sample:
+            if (new_model := getattr(sample.ball, 'model', None)) != model:
+                yield Trajectory(trajectory[0].timestamp, trajectory[-1].timestamp, np.array([s.ball.center for s in trajectory]))
+                trajectory = []
+                model = new_model
+            trajectory.append(sample)
+
+
 @dataclass
 @functools.total_ordering
 class Trajectory:
@@ -212,20 +236,22 @@ class MatchTrajectories:
                 while p < a:
                     self.FP += 1
                     p = next(pgen)
-                if a.TN in range(p.T0, p.TN):
+                if a.TN in range(p.T0, p.TN+1):
                     while (a2 := next(agen)) - p > a - p:
                         self.FN += 1
                         a = a2
                     self.TP += 1
                     self.update_metrics(p, a)
                     a = a2 # required if while loop is never entered
-                else: # if p.TN in range(a.T0, a.TN):
+                elif p.TN in range(a.T0, a.TN+1):
                     while a - (p2 := next(pgen)) > a - p:
                         self.FP += 1
                         p = p2
                     self.TP += 1
                     self.update_metrics(p, a)
                     p = p2 # required if while loop is never entered
+                else:
+                    raise ValueError(f"p={p} and a={a} do not overlap")
         except StopIteration:
             # Consume remaining trajectories
             try:
