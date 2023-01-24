@@ -310,9 +310,9 @@ class MatchTrajectories:
         self.FN = []
         self.dist_T0 = []
         self.dist_TN = []
-        self.TP_cb = TP_cb
-        self.FP_cb = FP_cb
-        self.FN_cb = FN_cb
+        self.TP_cb = TP_cb or (lambda p, a: None)
+        self.FP_cb = FP_cb or (lambda p: None)
+        self.FN_cb = FN_cb or (lambda a: None)
         self.annotations = []
         self.predictions = []
 
@@ -335,7 +335,7 @@ class MatchTrajectories:
                 samples = []
 
     def extract_predicted_trajectories(self, gen):
-        trajectory_id = 0
+        trajectory_id = 1
         model = None
         samples = []
         for sample in gen:
@@ -360,29 +360,31 @@ class MatchTrajectories:
             while True:
                 while a < p:
                     self.FN.append(a.trajectory_id)
-                    if self.FN_cb: self.FN_cb(a)
+                    self.FN_cb(a)
                     a = next(agen)
                 while p < a:
                     self.FP.append(p.trajectory_id)
-                    if self.FP_cb: self.FP_cb(p)
+                    self.FP_cb(p)
                     p = next(pgen)
                 if a.end_key.timestamp in range(p.start_key.timestamp, p.end_key.timestamp+1):
                     while (a2 := next(agen)) - p > a - p:
                         self.FN.append(a.trajectory_id)
-                        if self.FN_cb: self.FN_cb(a)
+                        self.FN_cb(a)
                         a = a2
                     self.TP.append((a.trajectory_id, p.trajectory_id))
-                    if self.TP_cb: self.TP_cb(a, p)
+                    self.TP_cb(a, p)
                     self.update_metrics(p, a)
+                    p = next(pgen)
                     a = a2 # required for last evaluation of while condition
                 elif p.end_key.timestamp in range(a.start_key.timestamp, a.end_key.timestamp+1):
                     while a - (p2 := next(pgen)) > a - p:
                         self.FP.append(p.trajectory_id)
-                        if self.FP_cb: self.FP_cb(p)
+                        self.FP_cb(p)
                         p = p2
                     self.TP.append((a.trajectory_id, p.trajectory_id))
-                    if self.TP_cb: self.TP_cb(a, p)
+                    self.TP_cb(a, p)
                     self.update_metrics(p, a)
+                    a = next(agen)
                     p = p2 # required for last evaluation of while condition
                 else:
                     pass # no match, move-on to next annotated trajectory
@@ -391,13 +393,13 @@ class MatchTrajectories:
             try:
                 while (p := next(pgen)):
                     self.FP.append(p.trajectory_id)
-                    if self.FP_cb: self.FP_cb(p)
+                    self.FP_cb(p)
             except StopIteration:
                 pass
             try:
                 while (a := next(agen)):
                     self.FN.append(a.trajectory_id)
-                    if self.FN_cb: self.FN_cb(a)
+                    self.FN_cb(a)
             except StopIteration:
                 pass
 
