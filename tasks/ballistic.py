@@ -62,7 +62,6 @@ class Fitter:
     def __call__(self, samples):
         indices = [i for i, s in enumerate(samples) if hasattr(s, 'ball')]
         T0 = samples[indices[0]].ball.timestamp
-        TN = samples[indices[-1]].ball.timestamp
         P  = np.stack([samples[i].calib.P for i in indices])
         RT = np.stack([np.hstack([samples[i].calib.R, samples[i].calib.T]) for i in indices])
         K  = np.stack([samples[i].calib.K for i in indices])
@@ -101,18 +100,14 @@ class Fitter:
         return model
 
 
-class ModelFit(IntEnum):
+class ColorCodeModelFit(IntEnum):
     """ Model fitting status.
     """
-    NORMAL = 0
     NO_MODEL = 1
-    NOT_ENOUGH_INLIERS = 2
-    TOO_MANY_OUTLIERS = 3
+    ACCEPTED_MODEL = 2
+    DISCARDED = 3
     PROPOSED_MODEL = 4
     LESS_INLIERS = 5
-    FIRST_SAMPLE_NOT_INLIER = 6
-    CURVE_LENGTH_IS_TOO_SHORT = 7
-    BALL_BELOW_THE_GROUND = 8
 
 repr_map = { # true, perd
     (True, True): 'ʘ',
@@ -147,18 +142,8 @@ class SlidingWindow:
         self.display = display
         self.window_size = window_size or min_inliers
         if self.display:
-            for i, label in enumerate([
-                "normal",
-                "no model",
-                "not enough inliers",
-                "too many outliers",
-                "proposed model",
-                "fewer inliers than previous model",
-                "first sample is not an inlier",
-                "curve length is too short",
-                "ball below the ground"
-            ]):
-                print(f"\x1b[3{i}m{i} - {label}\x1b[0m")
+            for label in ColorCodeModelFit:
+                print(f"\x1b[3{label}m{label} -", label, "\x1b[0m")
 
     @staticmethod
     def outliers_ratio(inliers):
@@ -172,12 +157,12 @@ class SlidingWindow:
             yield sample
             self.popped += 1
 
-    def print(self, inliers=[], color=0):
+    def print(self, inliers=[], color=0, label=None):
         if self.display:
             print(
                 "  "*self.popped + f"|\x1b[3{color}m" + \
-                " ".join([repr_map[s.true_state == BallState.FLYING, inliers[i] if i < len(inliers) else False] for i, s in enumerate(self.window)]) + \
-                "\x1b[0m|"
+                " ".join([repr_map[s.ball_state == BallState.FLYING, inliers[i] if i < len(inliers) else False] for i, s in enumerate(self.window)]) + \
+                "\x1b[0m| " + (label or "")
             )
 
     def fit(self):
@@ -202,18 +187,29 @@ class SlidingWindow:
                     new_model = self.fit()
                     if new_model is None:
                         break
+
                     if sum(new_model.inliers) < sum(model.inliers):
-                        self.print(new_model.inliers, color=ModelFit.LESS_INLIERS)
+                        self.print(new_model.inliers, color=ColorCodeModelFit.LESS_INLIERS)
                         break
                     model = new_model
 
-                self.print(model.inliers, color=ModelFit.PROPOSED_MODEL)
+                self.print(model.inliers, color=ColorCodeModelFit.ACCEPTED_MODEL)
 
             except StopIteration:
                 empty = True # empty generator raises `StopIteration`
 
             # pop model data
             if model: # required if `StopIteration` is raised before `model` is assigned
+                # def callback(i, sample):
+                #     if i in model.indices:
+                #         if not hasattr(sample, 'ball'):
+                #             sample.ball = Ball({
+                #                 'origin': 'model',
+                #                 'center': model(sample.timestamps[0]).tolist(),
+                #                 'timestamp' : sample.timestamps[0],
+                #                 'image': None
+                #             })
+                #         sample.ball.model = model
                 callback = lambda i, s: setattr(setdefaultattr(s, 'ball', Ball({
                     'origin': 'model',
                     'center': model(s.timestamps[0]).tolist(),
@@ -222,75 +218,67 @@ class SlidingWindow:
                 })), 'model', model if i in model.indices else None)
                 yield from self.pop(np.max(np.where(model.inliers))+1, callback=callback)
 
-# er = Point3D(*data['center'])
-#         self.origin = data.get('origin', "annotation")
-#         self.camera = data['image']
-#         self.visible = data.get('visible', None)
-#         self.state = data.get('state', BallState.NONE)
-#         self.value = data.get('value', None)
-
         yield from self.pop(len(self.window))
 
 class NaiveSlidingWindow(SlidingWindow):
     def fit(self):
         model = self.fitter(self.window)
         if model is None:
-            self.print(color=ModelFit.NO_MODEL)
+            self.print(color=ColorCodeModelFit.NO_MODEL)
             return None
 
         inliers = model.inliers
         if sum(inliers) < self.min_inliers:
-            self.print(inliers, color=ModelFit.NOT_ENOUGH_INLIERS)
+            self.print(inliers, color=ColorCodeModelFit.DISCARDED, label="NOT_ENOUGH_INLIERS")
             return None
 
         if self.outliers_ratio(inliers) > self.max_outliers_ratio:
-            self.print(inliers, color=ModelFit.TOO_MANY_OUTLIERS)
+            self.print(inliers, color=ColorCodeModelFit.DISCARDED, label="TOO_MANY_OUTLIERS")
             return None
 
         if not inliers[0]:
-            self.print(inliers, color=ModelFit.FIRST_SAMPLE_NOT_INLIER)
+            self.print(inliers, color=ColorCodeModelFit.DISCARDED, label="FIRST_SAMPLE_NOT_INLIER")
             return None
 
         timestamps = np.array([self.window[i].ball.timestamp for i in model.indices])
         points3D = model(timestamps)
         if points3D.z.max() > 0: # ball is under the ground (z points down)
-            self.print(model.inliers, color=ModelFit.BALL_BELOW_THE_GROUND)
+            self.print(model.inliers, color=ColorCodeModelFit.DISCARDED, label="BALL_BELOW_THE_GROUND")
             return None
 
         distances3D = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
         if distances3D.sum() < self.min_distance:
-            self.print(model.inliers, color=ModelFit.CURVE_LENGTH_IS_TOO_SHORT)
+            self.print(model.inliers, color=ColorCodeModelFit.DISCARDED, label="CURVE_LENGTH_IS_TOO_SHORT")
             return None
 
         # TODO: remove trajectories that don't have a path long enough in the image space
-
+        self.print(model.inliers, color=ColorCodeModelFit.PROPOSED_MODEL)
         return model
 
 class BallStateSlidingWindow(SlidingWindow):
     def fit(self):
         # TODO: adjust conditions
-        flyings = [s.ball.state == BallState.FLYING for s in self.window if hasattr(s, 'ball')]
+        flyings = [hasattr(s, 'ball') and s.ball.state == BallState.FLYING for s in self.window]
         if sum(flyings) < self.min_inliers:
-            self.print(flyings, color=ModelFit.NOT_ENOUGH_INLIERS)
+            self.print(flyings, color=ColorCodeModelFit.DISCARDED, label="not enough flying balls")
             return None
 
         if self.outliers_ratio(flyings) > self.max_outliers_ratio:
-            self.print(flyings, color=ModelFit.TOO_MANY_OUTLIERS)
+            self.print(flyings, color=ColorCodeModelFit.DISCARDED, label="TOO_MANY_OUTLIERS")
             return None
 
         model = self.fitter(self.window)
         if model is None:
-            self.print(flyings, color=ModelFit.NO_MODEL)
+            self.print(flyings, color=ColorCodeModelFit.NO_MODEL)
             return None
 
         inliers = model.inliers
         if sum(inliers) < self.min_inliers:
-            self.print(flyings, color=ModelFit.NOT_ENOUGH_INLIERS)
+            self.print(inliers, color=ColorCodeModelFit.DISCARDED, label="not enough inliers")
             return None
-        # if not inliers[0]:
-        #     self.print(flyings, color=ModelFit.FIRST_SAMPLE_NOT_INLIER)
-        #     return None
 
+        self.print(model.inliers, color=ColorCodeModelFit.PROPOSED_MODEL, label='(inliers)')
+        self.print(flyings, color=ColorCodeModelFit.PROPOSED_MODEL, label='(flyings)')
         return model
 
 
