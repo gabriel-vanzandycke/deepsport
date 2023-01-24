@@ -12,7 +12,7 @@ from experimentator import find
 from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantsDataset
 from deepsport_utilities.utils import VideoMaker
 
-from tasks.ballistic import NaiveSlidingWindow, BallStateSlidingWindow, extract_predicted_trajectories, extract_annotated_trajectories, MatchTrajectories, TrajectoryRenderer
+from tasks.ballistic import NaiveSlidingWindow, BallStateSlidingWindow, extract_predicted_trajectories, extract_annotated_trajectories, MatchTrajectories, TrajectoryRenderer, SelectBall
 
 dotenv.load_dotenv()
 
@@ -27,15 +27,7 @@ sds = PickledDataset(find("raw_sequences_dataset.pickle"))
 ids = SequenceInstantsDataset(sds)
 
 dds = PickledDataset(find(args.positions_dataset))
-def set_ball(key, item):
-    try:
-        item.ball = max([d for d in item.ball_detections if d.origin == 'ballseg'], key=lambda d: d.value)
-        item.ball.timestamp = item.timestamps[item.ball.camera]
-        item.calib = item.calibs[item.ball.camera]
-    except ValueError:
-        pass
-    return item
-dds = TransformedDataset(dds, [set_ball])
+dds = TransformedDataset(dds, [SelectBall('ballseg')])
 
 
 if args.method == 'baseline':

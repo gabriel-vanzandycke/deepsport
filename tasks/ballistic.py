@@ -493,3 +493,17 @@ class TrajectoryRenderer():
     #                     cv2.circle(image, center, int(radius), color, 1)
     #                     cv2.putText(image, str(ball.state), center, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     #                 cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 30), self.thickness, lineType=cv2.LINE_AA)
+
+
+
+class SelectBall:
+    def __init__(self, origin):
+        self.origin = origin
+    def __call__(self, key, item):
+        try:
+            item.ball = max([d for d in item.ball_detections if d.origin == self.origin], key=lambda d: d.value)
+            item.ball.timestamp = item.timestamps[item.ball.camera]
+            item.calib = item.calibs[item.ball.camera]
+        except ValueError:
+            pass
+        return item
