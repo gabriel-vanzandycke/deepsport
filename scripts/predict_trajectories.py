@@ -27,7 +27,6 @@ sds = PickledDataset(find("raw_sequences_dataset.pickle"))
 ids = SequenceInstantsDataset(sds)
 
 dds = PickledDataset(find(args.positions_dataset))
-#dds = FilteredDataset(ds, lambda k,v: len([d for d in v.ball_detections if d.origin == 'ballseg']) > 0)
 def set_ball(key, item):
     try:
         item.ball = max([d for d in item.ball_detections if d.origin == 'ballseg'], key=lambda d: d.value)
@@ -44,11 +43,11 @@ if args.method == 'baseline':
                     error_fct=lambda p_error, d_error: np.linalg.norm(p_error) + 10*np.linalg.norm(d_error),
                     inliers_condition=lambda p_error, d_error: p_error < np.hstack([[3]*3, [5]*(len(p_error)-6), [2]*3]), tol=.1)
 elif args.method == 'usestate':
-    sw = BallStateSlidingWindow(min_distance=75, min_inliers=7, max_outliers_ratio=.25, display=True,
+    sw = BallStateSlidingWindow(min_distance=75, min_inliers=7, max_outliers_ratio=.25, display=False,
                    error_fct=lambda p_error, d_error: np.linalg.norm(p_error) + 20*np.linalg.norm(d_error),
                    inliers_condition=lambda p_error, d_error: p_error < 6, tol=1)
 
-predicted_trajectories = extract_predicted_trajectories(sw(filter(lambda s: hasattr(s, 'ball'), (dds.query_item(k) for k in tqdm(sorted(dds.keys, key=lambda k: k.timestamp))))))
+predicted_trajectories = extract_predicted_trajectories(sw(dds.query_item(k) for k in tqdm(sorted(dds.keys, key=lambda k: k.timestamp))))
 annotated_trajectories = extract_annotated_trajectories((dds.query_item(k) for k in tqdm(sorted(dds.keys, key=lambda k: k.timestamp))))
 
 
@@ -62,8 +61,8 @@ annotated_trajectories = extract_annotated_trajectories((dds.query_item(k) for k
 renderer = TrajectoryRenderer(ids, margin=2)
 
 def create_video(trajectory, metric):
-    arena_label = trajectory.samples[0].key.arena_label
-    prefix = os.path.join(os.environ['HOME'], "globalscratch", args.method, f"{metric}_{arena_label}_{trajectory.T0}")
+    key = trajectory.start_key
+    prefix = os.path.join(os.environ['HOME'], "globalscratch", args.method, f"{metric}_{key.arena_label}_{key.timestamp}")
     os.makedirs(os.path.dirname(prefix), exist_ok=True)
 
     with VideoMaker(prefix+".mp4") as vm:

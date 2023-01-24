@@ -1,29 +1,17 @@
-import copy
-from dataclasses import dataclass
 from enum import IntEnum
-import functools
-from typing import Iterable
 
 from calib3d import Calib, Point3D, Point2D, ProjectiveDrawer
 import cv2
 import numpy as np
 import scipy.optimize
-from mlworkflow import SideRunner
 
 from deepsport_utilities.court import BALL_DIAMETER
-from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState
+from deepsport_utilities.utils import setdefaultattr
+from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, Ball
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
 
 g = 9.81 * 100 /(1000*1000) # m/s² => cm/ms²
-
-
-repr_map = { # true, perd
-    (True, True): 'ʘ',
-    (True, False): '·',
-    (False, True): 'O',
-    (False, False): ' ',
-}
 
 
 def project_3D_to_2D(P, points3D):
@@ -72,13 +60,14 @@ class Fitter:
         self.optimizer_kwargs = optimizer_kwargs
 
     def __call__(self, samples):
-        T0 = samples[0].ball.timestamp
-        TN = samples[-1].ball.timestamp
-        P  = np.stack([s.calib.P for s in samples])
-        RT = np.stack([np.hstack([s.calib.R, s.calib.T]) for s in samples])
-        K  = np.stack([s.calib.K for s in samples])
-        timestamps = np.array([s.ball.timestamp for s in samples])
-        points3D = Point3D([s.ball.center for s in samples])
+        indices = [i for i, s in enumerate(samples) if hasattr(s, 'ball')]
+        T0 = samples[indices[0]].ball.timestamp
+        TN = samples[indices[-1]].ball.timestamp
+        P  = np.stack([samples[i].calib.P for i in indices])
+        RT = np.stack([np.hstack([samples[i].calib.R, samples[i].calib.T]) for i in indices])
+        K  = np.stack([samples[i].calib.K for i in indices])
+        timestamps = np.array([samples[i].ball.timestamp for i in indices])
+        points3D = Point3D([samples[i].ball.center for i in indices])
         p_data = project_3D_to_2D(P, points3D)
         d_data = compute_length2D(K, RT, points3D, BALL_DIAMETER, points2D=p_data)
 
@@ -104,10 +93,11 @@ class Fitter:
         result = getattr(scipy.optimize, self.optimizer)(error, initial_guess, **self.optimizer_kwargs)
         if not result.success:
             return None
-        model = BallisticModel(result['x'], T0, TN)
-        model.inliers = self.inliers_condition(p_error, d_error)
-        model.indices = np.arange(np.min(np.where(model.inliers)), np.max(np.where(model.inliers))+1) if np.any(model.inliers) else np.array([])
+        model = BallisticModel(result['x'], T0)
+        model.inliers = np.array([False]*len(samples))
+        model.inliers[indices] = self.inliers_condition(p_error, d_error)
 
+        model.indices = np.arange(np.min(np.where(model.inliers)), np.max(np.where(model.inliers))+1) if np.any(model.inliers) else np.array([])
         return model
 
 
@@ -124,6 +114,13 @@ class ModelFit(IntEnum):
     CURVE_LENGTH_IS_TOO_SHORT = 7
     BALL_BELOW_THE_GROUND = 8
 
+repr_map = { # true, perd
+    (True, True): 'ʘ',
+    (True, False): '·',
+    (False, True): 'O',
+    (False, False): ' ',
+}
+
 class SlidingWindow:
     """ Detect ballistic motion by sliding a window over successive ball
         detections using a two terms error: a position error in the image space
@@ -139,7 +136,8 @@ class SlidingWindow:
             display (bool): if `True`, display the trajectory in the terminal.
             fitter_kwargs (dict): keyword arguments passed to model `Fitter`.
     """
-    def __init__(self, min_distance=50, max_outliers_ratio=.8, min_inliers=5, display=False, window_size=None, **fitter_kwargs):
+    def __init__(self, min_distance=50, max_outliers_ratio=.8, min_inliers=5,
+                 display=False, window_size=None, **fitter_kwargs):
         self.window = []
         self.fitter = Fitter(**fitter_kwargs)
         self.max_outliers_ratio = max_outliers_ratio
@@ -215,9 +213,21 @@ class SlidingWindow:
                 empty = True # empty generator raises `StopIteration`
 
             # pop model data
-            if model: # required in case `next(gen)` raises `StopIteration`
-                callback = lambda i, s: setattr(s.ball, 'model', model if i in model.indices else None)
+            if model: # required if `StopIteration` is raised before `model` is assigned
+                callback = lambda i, s: setattr(setdefaultattr(s, 'ball', Ball({
+                    'origin': 'model',
+                    'center': model(s.timestamps[0]).tolist(),
+                    'timestamp' : s.timestamps[0],
+                    'image': None
+                })), 'model', model if i in model.indices else None)
                 yield from self.pop(np.max(np.where(model.inliers))+1, callback=callback)
+
+# er = Point3D(*data['center'])
+#         self.origin = data.get('origin', "annotation")
+#         self.camera = data['image']
+#         self.visible = data.get('visible', None)
+#         self.state = data.get('state', BallState.NONE)
+#         self.value = data.get('value', None)
 
         yield from self.pop(len(self.window))
 
@@ -241,7 +251,7 @@ class NaiveSlidingWindow(SlidingWindow):
             self.print(inliers, color=ModelFit.FIRST_SAMPLE_NOT_INLIER)
             return None
 
-        timestamps = np.array([s.ball.timestamp for s in self.window])[model.indices]
+        timestamps = np.array([self.window[i].ball.timestamp for i in model.indices])
         points3D = model(timestamps)
         if points3D.z.max() > 0: # ball is under the ground (z points down)
             self.print(model.inliers, color=ModelFit.BALL_BELOW_THE_GROUND)
@@ -258,7 +268,8 @@ class NaiveSlidingWindow(SlidingWindow):
 
 class BallStateSlidingWindow(SlidingWindow):
     def fit(self):
-        flyings = [s.ball.state == BallState.FLYING for s in self.window]
+        # TODO: adjust conditions
+        flyings = [s.ball.state == BallState.FLYING for s in self.window if hasattr(s, 'ball')]
         if sum(flyings) < self.min_inliers:
             self.print(flyings, color=ModelFit.NOT_ENOUGH_INLIERS)
             return None
@@ -283,45 +294,44 @@ class BallStateSlidingWindow(SlidingWindow):
         return model
 
 
-@dataclass
-@functools.total_ordering
 class Trajectory:
-    T0: int
-    TN: int
-    samples: Iterable[None]
+    def __init__(self, samples):
+        self.start_key = samples[0].key
+        self.end_key = samples[-1].key
+        self.samples = samples
     def __lt__(self, other): # self < other
-        return self.TN < other.T0
+        return self.end_key < other.start_key
     def __gt__(self, other): # self > other
-        return self.T0 > other.TN
+        return self.start_key > other.end_key
     def __eq__(self, other):
         raise NotImplementedError
     def __sub__(self, other):
-        return min(self.TN, other.TN) - max(self.T0, other.T0)
-    def __getitem__(self, i):
-        return self.samples[i]
+        return min(self.end_key.timestamp,   other.end_key.timestamp) \
+             - max(self.start_key.timestamp, other.start_key.timestamp)
 
 
 def extract_annotated_trajectories(gen):
-    trajectory = []
+    samples = []
     for sample in gen:
         if sample.ball_state == BallState.FLYING:
-            trajectory.append(sample)
+            samples.append(sample)
         else:
-            if trajectory:
-                yield Trajectory(trajectory[0].key.timestamp, trajectory[-1].key.timestamp, trajectory)
-            trajectory = []
+            if samples:
+                yield Trajectory(samples)
+            samples = []
 
 def extract_predicted_trajectories(gen):
     model = None
-    trajectory = []
+    samples = []
     for sample in gen:
-        if (new_model := getattr(sample.ball, 'model', None)) != model:
-            if trajectory:
-                yield Trajectory(trajectory[0].key.timestamp, trajectory[-1].key.timestamp, trajectory)
-            trajectory = []
+        if hasattr(sample, 'ball') and (new_model := getattr(sample.ball, 'model', None)) != model:
+            if model:
+                yield Trajectory(samples)
+            samples = []
             model = new_model
         if model is not None:
-            trajectory.append(sample)
+            samples.append(sample)
+
 
 class MatchTrajectories:
     def __init__(self, TP_cb=None, FP_cb=None, FN_cb=None):
@@ -335,8 +345,8 @@ class MatchTrajectories:
         self.FN_cb = FN_cb
 
     def update_metrics(self, p: Trajectory, a: Trajectory):
-        self.dist_T0.append(p.T0 - a.T0)
-        self.dist_TN.append(p.TN - a.TN)
+        self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
+        self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
 
     def __call__(self, pgen, agen):
         try:
@@ -351,7 +361,7 @@ class MatchTrajectories:
                     self.FP += 1
                     if self.FP_cb: self.FP_cb(p)
                     p = next(pgen)
-                if a.TN in range(p.T0, p.TN+1):
+                if a.end_key.timestamp in range(p.start_key.timestamp, p.end_key.timestamp+1):
                     while (a2 := next(agen)) - p > a - p:
                         self.FN += 1
                         if self.FN_cb: self.FN_cb(a)
@@ -360,7 +370,7 @@ class MatchTrajectories:
                     if self.TP_cb: self.TP_cb(a, p)
                     self.update_metrics(p, a)
                     a = a2 # required for last evaluation of while condition
-                elif p.TN in range(a.T0, a.TN+1):
+                elif p.end_key.timestamp in range(a.start_key.timestamp, a.end_key.timestamp+1):
                     while a - (p2 := next(pgen)) > a - p:
                         self.FP += 1
                         if self.FP_cb: self.FP_cb(p)
@@ -390,61 +400,51 @@ class MatchTrajectories:
 class TrajectoryRenderer():
     def __init__(self, ids: InstantsDataset, margin: int=0):
         self.ids = ids
-        self.keys = list(ids.keys)
         self.margin = margin
 
-    def draw_ball(self, pd, image, ball, label=None):
+    def draw_ball(self, pd, image, ball, color=None, label=None):
+        color = color or pd.color
         ground3D = Point3D(ball.center.x, ball.center.y, 0)
-        pd.polylines(image, Point3D([ball.center, ground3D]), lineType=cv2.LINE_AA)
-        pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), lineType=cv2.LINE_AA, thickness=1)
-        pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), lineType=cv2.LINE_AA, thickness=1)
+        pd.polylines(image, Point3D([ball.center, ground3D]), lineType=cv2.LINE_AA, color=color)
+        pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), lineType=cv2.LINE_AA, thickness=1, color=color)
+        pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), lineType=cv2.LINE_AA, thickness=1, color=color)
         center = pd.calib.project_3D_to_2D(ball.center).to_int_tuple()
         radius = pd.calib.compute_length2D(ball.center, BALL_DIAMETER/2)
-        cv2.circle(image, center, int(radius), pd.color, 1)
+
+        cv2.circle(image, center, int(radius), color, 1)
         if label is not None:
-            cv2.putText(image, label, center, cv2.FONT_HERSHEY_SIMPLEX, 0.5, pd.color, 1, cv2.LINE_AA)
+            cv2.putText(image, label, center, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
     def __call__(self, trajectory: Trajectory):
-        i0 = self.keys.index(trajectory.samples[0].key)
-        iN = self.keys.index(trajectory.samples[-1].key)
-        keys = self.keys[i0-self.margin:iN+1+self.margin]
-        samples = iter(trajectory.samples)
-        sample = next(samples)
-        for key in keys:
+        for sample in trajectory.samples:
+            key = sample.key
             instant = self.ids.query_item(key)
-            if key == sample.key:
-                # draw ball if any
-                for i in range(len(instant.calibs)):
-                    if hasattr(sample, "ball"):
-                        ball = sample.ball
-                        color = (0, 120, 255) if hasattr(ball, "model") and ball.model is not None else (200, 40, 100)
-                        #i = ball.camera
-                        calib = instant.calibs[i]
-                        image = instant.images[i]
-                        pd = ProjectiveDrawer(calib, color, thickness=self.thickness, segments=1)
-                        self.draw_ball(pd, image, ball, str(ball.state))
 
-                        # draw model if any
-                        if hasattr(ball, "model") and ball.model is not None:
-                            model = ball.model
-                            points3D = model([s.ball.timestamp for s in trajectory.samples])
-                            ground3D = calib.project_3D_to_2D(Point3D(points3D.x, points3D.y, 0))
-                            start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
-                            stop  = Point3D(np.vstack([points3D[:, -1], ground3D[:, -1]]).T)
-                            for line in [points3D, ground3D, start, stop]:
-                                pd.polylines(image, line, lineType=cv2.LINE_AA)
+            for image, calib in zip(instant.images, instant.calibs):
+                pd = ProjectiveDrawer(calib, (0, 120, 255), segments=1)
 
-                    # draw ball annotation if any
-                    if sample.ball_annotations:
-                        ball = sample.ball_annotations[0]
-                        #i = ball.camera
-                        calib = instant.calibs[i]
-                        image = instant.images[i]
-                        pd = ProjectiveDrawer(calib, (0, 255, 20), thickness=self.thickness, segments=1)
-                        self.draw_ball(pd, image, ball)
-                    cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 20), self.thickness, lineType=cv2.LINE_AA)
+                if hasattr(sample, "ball"):
+                    ball = sample.ball
+                    self.draw_ball(pd, image, ball, label=str(ball.state))
 
-                sample = next(samples)
+                    if hasattr(ball, "model") and ball.model is not None:
+                        pd.color = (250, 195, 0)
+                        model = ball.model
+                        timestamps = np.array([sample.ball.timestamp for sample in trajectory.samples if hasattr(sample, 'ball') and hasattr(sample.ball, 'timestamp')])
+                        points3D = model(timestamps)
+                        ground3D = Point3D(points3D.x, points3D.y, np.zeros_like(points3D.x))
+                        start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
+                        stop  = Point3D(np.vstack([points3D[:, -1], ground3D[:, -1]]).T)
+                        for line in [points3D, ground3D, start, stop]:
+                            pd.polylines(image, line, lineType=cv2.LINE_AA)
+
+                # draw ball annotation if any
+                if sample.ball_annotations:
+                    ball = sample.ball_annotations[0]
+                    if ball.center.z < -0.01: # z pointing down
+                        color = (0, 255, 20)
+                        self.draw_ball(pd, image, ball, color=color)
+                cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 20), lineType=cv2.LINE_AA)
             yield np.hstack(instant.images)
 
 
