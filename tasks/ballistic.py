@@ -100,13 +100,11 @@ class Fitter:
         return model
 
 
-class ColorCodeModelFit(IntEnum):
-    """ Model fitting status.
-    """
+class ModelFit(IntEnum):
     NO_MODEL = 1
-    ACCEPTED_MODEL = 2
+    ACCEPTED = 2
     DISCARDED = 3
-    PROPOSED_MODEL = 4
+    PROPOSED = 4
     LESS_INLIERS = 5
 
 repr_map = { # true, perd
@@ -132,17 +130,19 @@ class SlidingWindow:
             fitter_kwargs (dict): keyword arguments passed to model `Fitter`.
     """
     def __init__(self, min_distance=50, max_outliers_ratio=.8, min_inliers=5,
-                 display=False, window_size=None, **fitter_kwargs):
+                 display=False, window_size=None, max_inliers_decrease=.1,
+                 **fitter_kwargs):
         self.window = []
         self.fitter = Fitter(**fitter_kwargs)
         self.max_outliers_ratio = max_outliers_ratio
+        self.max_inliers_decrease = max_inliers_decrease
         self.min_inliers = min_inliers
         self.min_distance = min_distance
         self.popped = 0
         self.display = display
         self.window_size = window_size or min_inliers
         if self.display:
-            for label in ColorCodeModelFit:
+            for label in ModelFit:
                 print(f"\x1b[3{label}m{label} -", label, "\x1b[0m")
 
     @staticmethod
@@ -188,12 +188,12 @@ class SlidingWindow:
                     if new_model is None:
                         break
 
-                    if sum(new_model.inliers) < sum(model.inliers):
-                        self.print(new_model.inliers, color=ColorCodeModelFit.LESS_INLIERS)
+                    if (sum(new_model.inliers) - sum(model.inliers))/len(model.inliers) < -self.max_inliers_decrease:
+                        self.print(new_model.inliers, color=ModelFit.LESS_INLIERS)
                         break
                     model = new_model
 
-                self.print(model.inliers, color=ColorCodeModelFit.ACCEPTED_MODEL)
+                self.print(model.inliers, color=ModelFit.ACCEPTED)
 
             except StopIteration:
                 empty = True # empty generator raises `StopIteration`
@@ -224,69 +224,75 @@ class NaiveSlidingWindow(SlidingWindow):
     def fit(self):
         model = self.fitter(self.window)
         if model is None:
-            self.print(color=ColorCodeModelFit.NO_MODEL)
+            self.print(color=ModelFit.NO_MODEL)
             return None
 
         inliers = model.inliers
         if sum(inliers) < self.min_inliers:
-            self.print(inliers, color=ColorCodeModelFit.DISCARDED, label="NOT_ENOUGH_INLIERS")
+            self.print(inliers, color=ModelFit.DISCARDED, label="not enough inliers")
             return None
 
         if self.outliers_ratio(inliers) > self.max_outliers_ratio:
-            self.print(inliers, color=ColorCodeModelFit.DISCARDED, label="TOO_MANY_OUTLIERS")
+            self.print(inliers, color=ModelFit.DISCARDED, label="too many outliers")
             return None
 
         if not inliers[0]:
-            self.print(inliers, color=ColorCodeModelFit.DISCARDED, label="FIRST_SAMPLE_NOT_INLIER")
+            self.print(inliers, color=ModelFit.DISCARDED, label="first sample is not an inlier")
             return None
 
         timestamps = np.array([self.window[i].ball.timestamp for i in model.indices])
         points3D = model(timestamps)
         if points3D.z.max() > 0: # ball is under the ground (z points down)
-            self.print(model.inliers, color=ColorCodeModelFit.DISCARDED, label="BALL_BELOW_THE_GROUND")
+            self.print(model.inliers, color=ModelFit.DISCARDED, label="z < 0")
             return None
 
         distances3D = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
         if distances3D.sum() < self.min_distance:
-            self.print(model.inliers, color=ColorCodeModelFit.DISCARDED, label="CURVE_LENGTH_IS_TOO_SHORT")
+            self.print(model.inliers, color=ModelFit.DISCARDED, label="3D curve too short")
             return None
 
         # TODO: remove trajectories that don't have a path long enough in the image space
-        self.print(model.inliers, color=ColorCodeModelFit.PROPOSED_MODEL)
+        raise NotImplementedError
+
+        self.print(model.inliers, color=ModelFit.PROPOSED)
         return model
 
 class BallStateSlidingWindow(SlidingWindow):
+    def __init__(self, *args, min_flyings, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_flyings = min_flyings
+
     def fit(self):
-        # TODO: adjust conditions
         flyings = [hasattr(s, 'ball') and s.ball.state == BallState.FLYING for s in self.window]
-        if sum(flyings) < self.min_inliers:
-            self.print(flyings, color=ColorCodeModelFit.DISCARDED, label="not enough flying balls")
+        if sum(flyings) < self.min_flyings:
+            self.print(flyings, color=ModelFit.DISCARDED, label="not enough flying balls")
             return None
 
         if self.outliers_ratio(flyings) > self.max_outliers_ratio:
-            self.print(flyings, color=ColorCodeModelFit.DISCARDED, label="TOO_MANY_OUTLIERS")
+            self.print(flyings, color=ModelFit.DISCARDED, label="too many outliers")
             return None
 
         model = self.fitter(self.window)
         if model is None:
-            self.print(flyings, color=ColorCodeModelFit.NO_MODEL)
+            self.print(flyings, color=ModelFit.NO_MODEL)
             return None
 
         inliers = model.inliers
         if sum(inliers) < self.min_inliers:
-            self.print(inliers, color=ColorCodeModelFit.DISCARDED, label="not enough inliers")
+            self.print(inliers, color=ModelFit.DISCARDED, label="not enough inliers")
             return None
 
-        self.print(model.inliers, color=ColorCodeModelFit.PROPOSED_MODEL, label='(inliers)')
-        self.print(flyings, color=ColorCodeModelFit.PROPOSED_MODEL, label='(flyings)')
+        self.print(model.inliers, color=ModelFit.PROPOSED, label='(inliers)')
+        self.print(flyings, color=ModelFit.PROPOSED, label='(flyings)')
         return model
 
 
 class Trajectory:
-    def __init__(self, samples):
+    def __init__(self, samples, trajectory_id):
         self.start_key = samples[0].key
         self.end_key = samples[-1].key
         self.samples = samples
+        self.trajectory_id = trajectory_id
     def __lt__(self, other): # self < other
         return self.end_key < other.start_key
     def __gt__(self, other): # self > other
@@ -297,73 +303,84 @@ class Trajectory:
         return min(self.end_key.timestamp,   other.end_key.timestamp) \
              - max(self.start_key.timestamp, other.start_key.timestamp)
 
-
-def extract_annotated_trajectories(gen):
-    samples = []
-    for sample in gen:
-        if sample.ball_state == BallState.FLYING:
-            samples.append(sample)
-        else:
-            if samples:
-                yield Trajectory(samples)
-            samples = []
-
-def extract_predicted_trajectories(gen):
-    model = None
-    samples = []
-    for sample in gen:
-        if hasattr(sample, 'ball') and (new_model := getattr(sample.ball, 'model', None)) != model:
-            if model:
-                yield Trajectory(samples)
-            samples = []
-            model = new_model
-        if model is not None:
-            samples.append(sample)
-
-
 class MatchTrajectories:
     def __init__(self, TP_cb=None, FP_cb=None, FN_cb=None):
-        self.TP = 0
-        self.FP = 0
-        self.FN = 0
+        self.TP = []
+        self.FP = []
+        self.FN = []
         self.dist_T0 = []
         self.dist_TN = []
         self.TP_cb = TP_cb
         self.FP_cb = FP_cb
         self.FN_cb = FN_cb
+        self.annotations = []
+        self.predictions = []
 
     def update_metrics(self, p: Trajectory, a: Trajectory):
         self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
         self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
 
+    def extract_annotated_trajectories(self, gen):
+        trajectory_id = 1
+        samples = []
+        for sample in gen:
+            if sample.ball_state == BallState.FLYING:
+                self.annotations.append(trajectory_id)
+                samples.append(sample)
+            else:
+                self.annotations.append(0)
+                if samples:
+                    yield Trajectory(samples, trajectory_id)
+                    trajectory_id += 1
+                samples = []
+
+    def extract_predicted_trajectories(self, gen):
+        trajectory_id = 0
+        model = None
+        samples = []
+        for sample in gen:
+            if hasattr(sample, 'ball') and (new_model := getattr(sample.ball, 'model', None)) != model:
+                if model:
+                    yield Trajectory(samples, trajectory_id)
+                    trajectory_id += 1
+                samples = []
+                model = new_model
+            if model is not None:
+                samples.append(sample)
+                self.predictions.append(trajectory_id)
+            else:
+                self.predictions.append(0)
+
     def __call__(self, pgen, agen):
+        pgen = self.extract_predicted_trajectories(pgen)
+        agen = self.extract_annotated_trajectories(agen)
         try:
             p = next(pgen)
             a = next(agen)
             while True:
                 while a < p:
-                    self.FN += 1
+                    self.FN.append(a.trajectory_id)
                     if self.FN_cb: self.FN_cb(a)
                     a = next(agen)
                 while p < a:
-                    self.FP += 1
+                    self.FP.append(p.trajectory_id)
                     if self.FP_cb: self.FP_cb(p)
                     p = next(pgen)
                 if a.end_key.timestamp in range(p.start_key.timestamp, p.end_key.timestamp+1):
                     while (a2 := next(agen)) - p > a - p:
-                        self.FN += 1
+                        self.FN.append(a.trajectory_id)
                         if self.FN_cb: self.FN_cb(a)
                         a = a2
-                    self.TP += 1
+                    self.TP.append((a.trajectory_id, p.trajectory_id))
                     if self.TP_cb: self.TP_cb(a, p)
                     self.update_metrics(p, a)
                     a = a2 # required for last evaluation of while condition
                 elif p.end_key.timestamp in range(a.start_key.timestamp, a.end_key.timestamp+1):
                     while a - (p2 := next(pgen)) > a - p:
-                        self.FP += 1
+                        self.FP.append(p.trajectory_id)
                         if self.FP_cb: self.FP_cb(p)
                         p = p2
-                    self.TP += 1
+                    self.TP.append((a.trajectory_id, p.trajectory_id))
                     if self.TP_cb: self.TP_cb(a, p)
                     self.update_metrics(p, a)
                     p = p2 # required for last evaluation of while condition
@@ -373,13 +390,13 @@ class MatchTrajectories:
             # Consume remaining trajectories
             try:
                 while (p := next(pgen)):
-                    self.FP += 1
+                    self.FP.append(p.trajectory_id)
                     if self.FP_cb: self.FP_cb(p)
             except StopIteration:
                 pass
             try:
                 while (a := next(agen)):
-                    self.FN += 1
+                    self.FN.append(a.trajectory_id)
                     if self.FN_cb: self.FN_cb(a)
             except StopIteration:
                 pass
