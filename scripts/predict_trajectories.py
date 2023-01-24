@@ -39,8 +39,8 @@ if __name__ == '__main__':
                     error_fct=lambda p_error, d_error: np.linalg.norm(p_error) + 20*np.linalg.norm(d_error),
                     inliers_condition=lambda p_error, d_error: p_error < 6, tol=1)
 
-    agen = (dds.query_item(k) for k in tqdm(sorted(dds.keys, key=lambda k: k.timestamp)))
-    pgen = sw(dds.query_item(k) for k in tqdm(sorted(dds.keys, key=lambda k: k.timestamp)))
+    agen = (dds.query_item(k) for k in tqdm(sorted(dds.keys)))
+    pgen = sw(dds.query_item(k) for k in tqdm(sorted(dds.keys)))
 
     pool = Pool(10)
     renderer = TrajectoryRenderer(ids, margin=2)

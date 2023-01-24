@@ -61,6 +61,8 @@ class Fitter:
 
     def __call__(self, samples):
         indices = [i for i, s in enumerate(samples) if hasattr(s, 'ball')]
+        if not indices:
+            return None
         T0 = samples[indices[0]].ball.timestamp
         P  = np.stack([samples[i].calib.P for i in indices])
         RT = np.stack([np.hstack([samples[i].calib.R, samples[i].calib.T]) for i in indices])
@@ -87,7 +89,10 @@ class Fitter:
         # initial guess computed from MSE solution of the 3D problem
         A = np.hstack([np.tile(np.eye(3), (len(timestamps), 1)), np.vstack(np.eye(3)[np.newaxis]*(timestamps-T0)[...,np.newaxis, np.newaxis])])
         b = np.vstack(points3D) - np.vstack(np.eye(3, 1, k=-2)[np.newaxis]*g*(timestamps-T0)[...,np.newaxis, np.newaxis]**2/2)
-        initial_guess = (np.linalg.inv(A.T@A)@A.T@b).flatten()
+        try:
+            initial_guess = (np.linalg.inv(A.T@A)@A.T@b).flatten()
+        except np.linalg.LinAlgError:
+            return None
 
         result = getattr(scipy.optimize, self.optimizer)(error, initial_guess, **self.optimizer_kwargs)
         if not result.success:
@@ -259,9 +264,9 @@ class NaiveSlidingWindow(SlidingWindow):
             self.print(model.inliers, color=ModelFit.DISCARDED, label="3D curve too short")
             return None
 
-        position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index])
+        position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index:point_index+1])
         distances2D = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1])]
-        if distances2D.sum() < self.min_distance_2D:
+        if sum(distances2D) < self.min_distance_2D:
             self.print(model.inliers, color=ModelFit.DISCARDED, label="2D curve too short")
             return None
 
