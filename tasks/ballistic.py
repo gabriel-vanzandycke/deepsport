@@ -225,6 +225,10 @@ class SlidingWindow:
         yield from self.pop(len(self.window))
 
 class NaiveSlidingWindow(SlidingWindow):
+    def __init__(self, *args, min_distance_2D=100, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_distance_2D = min_distance_2D
+
     def fit(self):
         model = self.fitter(self.window)
         if model is None:
@@ -255,8 +259,11 @@ class NaiveSlidingWindow(SlidingWindow):
             self.print(model.inliers, color=ModelFit.DISCARDED, label="3D curve too short")
             return None
 
-        # TODO: remove trajectories that don't have a path long enough in the image space
-        raise NotImplementedError
+        position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index])
+        distances2D = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1])]
+        if distances2D.sum() < self.min_distance_2D:
+            self.print(model.inliers, color=ModelFit.DISCARDED, label="2D curve too short")
+            return None
 
         self.print(model.inliers, color=ModelFit.PROPOSED)
         return model
