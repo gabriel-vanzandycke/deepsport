@@ -124,25 +124,31 @@ class SlidingWindow:
         detections using a two terms error: a position error in the image space
         (in pixels), and a diameter error in the image space (in pixels).
         Arguments:
-            min_distance (int): trajectories shorter than `min_distance` (in cm)
+            window_size (int): default sliding window size.
+            min_inliers (int): trajectories with less than `min_inliers` inliers
                 are discarded.
             max_outliers_ratio (float): trajectories with more than
                 `max_outliers_ratio` outliers (counted between first and last
                 inliers) are discarded.
-            min_inliers (int): trajectories with less than `min_inliers` inliers
-                are discarded.
+            min_distance_3D (int): trajectories shorter than `min_distance_3D`
+                (in cm) are discarded.
+            min_distance_2D (int): trajectories shorter than `min_distance_2D`
+                (in pixels) are discarded.
+            max_inliers_decrease (float): threshold above which, if the number
+                of inliers decreases, the trajectory is discarded.
             display (bool): if `True`, display the trajectory in the terminal.
             fitter_kwargs (dict): keyword arguments passed to model `Fitter`.
     """
-    def __init__(self, min_distance=50, max_outliers_ratio=.8, min_inliers=5,
-                 display=False, window_size=None, max_inliers_decrease=.1,
-                 **fitter_kwargs):
+    def __init__(self, window_size=None, min_inliers=5, max_outliers_ratio=.8,
+            min_distance_3D=50, min_distance_2D=50, max_inliers_decrease=.1,
+            display=False, **fitter_kwargs):
         self.window = []
         self.fitter = Fitter(**fitter_kwargs)
         self.max_outliers_ratio = max_outliers_ratio
         self.max_inliers_decrease = max_inliers_decrease
         self.min_inliers = min_inliers
-        self.min_distance = min_distance
+        self.min_distance_3D = min_distance_3D
+        self.min_distance_2D = min_distance_2D
         self.popped = 0
         self.display = display
         self.window_size = window_size or min_inliers
@@ -230,10 +236,6 @@ class SlidingWindow:
         yield from self.pop(len(self.window))
 
 class NaiveSlidingWindow(SlidingWindow):
-    def __init__(self, *args, min_distance_2D=100, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.min_distance_2D = min_distance_2D
-
     def fit(self):
         model = self.fitter(self.window)
         if model is None:
@@ -253,19 +255,19 @@ class NaiveSlidingWindow(SlidingWindow):
             self.print(inliers, color=ModelFit.DISCARDED, label="first sample is not an inlier")
             return None
 
-        timestamps = np.array([self.window[i].ball.timestamp for i in model.indices])
+        timestamps = np.array([self.window[i].ball.timestamp for i in model.indices if hasattr(self.window[i], 'ball')])
         points3D = model(timestamps)
         if points3D.z.max() > 0: # ball is under the ground (z points down)
             self.print(model.inliers, color=ModelFit.DISCARDED, label="z < 0")
             return None
 
         distances3D = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
-        if distances3D.sum() < self.min_distance:
+        if distances3D.sum() < self.min_distance_3D:
             self.print(model.inliers, color=ModelFit.DISCARDED, label="3D curve too short")
             return None
 
         position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index:point_index+1])
-        distances2D = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1])]
+        distances2D = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1]) if hasattr(self.window[sample_index], 'ball')]
         if sum(distances2D) < self.min_distance_2D:
             self.print(model.inliers, color=ModelFit.DISCARDED, label="2D curve too short")
             return None
@@ -320,7 +322,7 @@ class Trajectory:
              - max(self.start_key.timestamp, other.start_key.timestamp)
 
 class MatchTrajectories:
-    def __init__(self, TP_cb=None, FP_cb=None, FN_cb=None):
+    def __init__(self, min_size=7, TP_cb=None, FP_cb=None, FN_cb=None):
         self.TP = []
         self.FP = []
         self.FN = []
@@ -331,6 +333,7 @@ class MatchTrajectories:
         self.FN_cb = FN_cb or (lambda a, p: None)
         self.annotations = []
         self.predictions = []
+        self.min_size = min_size
 
     def update_metrics(self, a: Trajectory, p: Trajectory):
         self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
@@ -346,7 +349,8 @@ class MatchTrajectories:
             else:
                 self.annotations.append(0)
                 if samples:
-                    yield Trajectory(samples, trajectory_id)
+                    if len(samples) >= self.min_size:
+                        yield Trajectory(samples, trajectory_id)
                     trajectory_id += 1
                 samples = []
 

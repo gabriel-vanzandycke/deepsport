@@ -1,14 +1,12 @@
 import argparse
-import functools
-from multiprocessing.pool import Pool
-import os
 
 import numpy as np
 from tqdm.auto import tqdm
 import dotenv
 
-from mlworkflow import PickledDataset, TransformedDataset
 from experimentator import find
+from mlworkflow import PickledDataset, TransformedDataset, SideRunner
+import optuna
 
 from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantsDataset
 from deepsport_utilities.utils import VideoMaker
@@ -20,9 +18,10 @@ dotenv.load_dotenv()
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="""""")
     parser.add_argument("positions_dataset")
+    parser.add_argument("--create-video", action='store_true', default=False)
     parser.add_argument("--method", default='baseline', choices=['baseline', 'usestate'])
+    parser.add_argument("--min-size", type=int, default=7)
     args = parser.parse_args()
-
 
     sds = PickledDataset(find("raw_sequences_dataset.pickle"))
     ids = SequenceInstantsDataset(sds)
@@ -30,44 +29,49 @@ if __name__ == '__main__':
     dds = PickledDataset(find(args.positions_dataset))
     dds = TransformedDataset(dds, [SelectBall('ballseg')])
 
-    if args.method == 'baseline':
-        sw = NaiveSlidingWindow(min_distance=75, min_inliers=7, max_inliers_decrease=.1, max_outliers_ratio=.25, display=False,
-                        error_fct=lambda p_error, d_error: np.linalg.norm(p_error) + 10*np.linalg.norm(d_error),
-                        inliers_condition=lambda p_error, d_error: p_error < np.hstack([[3]*3, [5]*(len(p_error)-6), [2]*3]), tol=.1)
-    elif args.method == 'usestate':
-        sw = BallStateSlidingWindow(min_distance=75, max_inliers_decrease=.1, window_size=8, min_flyings=5, min_inliers=7, max_outliers_ratio=.25, display=False,
-                    error_fct=lambda p_error, d_error: np.linalg.norm(p_error) + 20*np.linalg.norm(d_error),
-                    inliers_condition=lambda p_error, d_error: p_error < 6, tol=1)
+    SlidingWindow = {
+        'baseline': NaiveSlidingWindow,
+        'usestate': BallStateSlidingWindow
+    }[args.method]
 
-    agen = (dds.query_item(k) for k in tqdm(sorted(dds.keys)))
-    pgen = sw(dds.query_item(k) for k in tqdm(sorted(dds.keys)))
+    def objective(trial):
+        window_size = trial.suggest_int('window_size', 7, 10)
+        tol = trial.suggest_float('tol', .001, 10, log=True)
+        min_inliers = trial.suggest_int('min_inliers', 5, window_size-1)
+        max_outliers_ratio = trial.suggest_float('max_outliers_ratio', .1, .3, step=.05)
+        min_distance_3D = trial.suggest_int('min_distance_3D', 50, 100)
+        min_distance_2D = trial.suggest_int('min_distance_2D', 25, 100)
+        max_inliers_decrease = trial.suggest_float('max_inliers_decrease', .05, .2, step=.05)
+        d_error_weight = trial.suggest_int('d_error_weight', 1, 50, step=10)
+        p_error_threshold = trial.suggest_int('p_error_threshold', 4, 10, step=1)
 
-    pool = Pool(10)
-    renderer = TrajectoryRenderer(ids, margin=2)
+        error_fct = lambda p_error, d_error: np.linalg.norm(p_error) + d_error_weight*np.linalg.norm(d_error)
+        inliers_condition = lambda p_error, d_error: p_error < p_error_threshold
+        kwargs = dict(window_size=window_size, tol=tol, min_inliers=min_inliers,
+            max_outliers_ratio=max_outliers_ratio, max_inliers_decrease=max_inliers_decrease,
+            min_distance_3D=min_distance_3D, min_distance_2D=min_distance_2D,
+            error_fct=error_fct, inliers_condition=inliers_condition)
 
-    def create_video(trajectory, metric):
-        def f():
-            key = trajectory.start_key
-            prefix = os.path.join(os.environ['HOME'], "globalscratch", args.method, f"{metric}_{key.arena_label}_{key.timestamp}")
-            os.makedirs(os.path.dirname(prefix), exist_ok=True)
+        if args.method == 'usestate':
+            min_flyings = trial.suggest_int('min_flyings', 3, window_size)
+            kwargs.update(min_flyings=min_flyings)
 
-            with VideoMaker(prefix+".mp4") as vm:
-                for img in renderer(trajectory):
-                    vm(img)
-        #pool.apply_async(f)
-        f()
+        sw = SlidingWindow(**kwargs)
 
-    def FP_callback(annotated_trajectory, predicted_trajectory):
-        create_video(predicted_trajectory, metric="FP")
+        side_runner = SideRunner()
+        compare = MatchTrajectories(min_size=args.min_size)
+        agen = (dds.query_item(k) for k in tqdm(sorted(dds.keys)))
+        pgen = side_runner.yield_async(sw(dds.query_item(k) for k in tqdm(sorted(dds.keys))))
+        compare(agen, pgen)
 
-    def FN_callback(annotated_trajectory, predicted_trajectory):
-        create_video(annotated_trajectory, metric="FN")
+        precision = len(compare.TP)/(len(compare.TP) + len(compare.FP))
+        recall = len(compare.TP)/(len(compare.TP) + len(compare.FN))
+        return precision*recall
 
-    def TP_callback(annotated_trajectory, predicted_trajectory):
-        create_video(predicted_trajectory, metric="TP")
+    study = optuna.load_study(
+        study_name="ballistic_study",
+        storage="sqlite:///example.db"
+    )
+    study.optimize(objective, n_trials=10)
 
-    compare = MatchTrajectories(TP_cb=TP_callback, FP_cb=FP_callback, FN_cb=FN_callback)
-    compare(agen, pgen)
-
-    pool.close()
-    pool.join()
+    print(study.best_params)
