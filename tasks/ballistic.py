@@ -111,6 +111,7 @@ class ModelFit(IntEnum):
     DISCARDED = 3
     PROPOSED = 4
     LESS_INLIERS = 5
+    SKIPPED = 6
 
 repr_map = { # true, perd
     (True, True): 'ʘ',
@@ -126,39 +127,35 @@ class SlidingWindow:
         Arguments:
             window_size (int): default sliding window size.
             min_inliers (int): trajectories with less than `min_inliers` inliers
-                are discarded.
+                are discarded. Defaults to half of `window_size`.
             max_outliers_ratio (float): trajectories with more than
                 `max_outliers_ratio` outliers (counted between first and last
                 inliers) are discarded.
-            min_distance_3D (int): trajectories shorter than `min_distance_3D`
-                (in cm) are discarded.
-            min_distance_2D (int): trajectories shorter than `min_distance_2D`
-                (in pixels) are discarded.
+            min_distance_cm (int): trajectories shorter than `min_distance_cm`
+                (in world coordinates) are discarded.
+            min_distance_px (int): trajectories shorter than `min_distance_px`
+                (in image space) are discarded.
             max_inliers_decrease (float): threshold above which, if the number
                 of inliers decreases, the trajectory is discarded.
             display (bool): if `True`, display the trajectory in the terminal.
             fitter_kwargs (dict): keyword arguments passed to model `Fitter`.
     """
-    def __init__(self, window_size=None, min_inliers=5, max_outliers_ratio=.8,
-            min_distance_3D=50, min_distance_2D=50, max_inliers_decrease=.1,
+    def __init__(self, window_size=None, min_inliers=None, max_outliers_ratio=.8,
+            min_distance_cm=50, min_distance_px=50, max_inliers_decrease=.1,
             display=False, **fitter_kwargs):
         self.window = []
         self.fitter = Fitter(**fitter_kwargs)
         self.max_outliers_ratio = max_outliers_ratio
         self.max_inliers_decrease = max_inliers_decrease
-        self.min_inliers = min_inliers
-        self.min_distance_3D = min_distance_3D
-        self.min_distance_2D = min_distance_2D
+        self.min_inliers = min_inliers or window_size//2
+        self.min_distance_cm = min_distance_cm
+        self.min_distance_px = min_distance_px
         self.popped = 0
         self.display = display
         self.window_size = window_size or min_inliers
         if self.display:
             for label in ModelFit:
                 print(f"\x1b[3{label}m{label} -", label, "\x1b[0m")
-
-    @staticmethod
-    def outliers_ratio(inliers):
-        return 1 - sum(inliers)/(np.ptp(np.where(inliers)) + 1)
 
     def pop(self, count=1, callback=None):
         for i in range(count):
@@ -203,10 +200,15 @@ class SlidingWindow:
                     if new_model is None:
                         break
 
-                    if (sum(new_model.inliers) - sum(model.inliers))/len(model.inliers) < -self.max_inliers_decrease:
+                    inliers_increase = (sum(new_model.inliers) - sum(model.inliers))/len(model.inliers)
+                    if inliers_increase >= 0:
+                        model = new_model
+                    elif inliers_increase < -self.max_inliers_decrease:
                         self.print(new_model.inliers, color=ModelFit.LESS_INLIERS)
                         break
-                    model = new_model
+                    else: # inliers decrease but not too much
+                        self.print(new_model.inliers, color=ModelFit.SKIPPED)
+                        continue # keep previous model and wait for new data
 
                 self.print([i in model.indices for i in range(len(self.window))], color=ModelFit.ACCEPTED, label='(model)')
 
@@ -247,7 +249,8 @@ class NaiveSlidingWindow(SlidingWindow):
             self.print(inliers, color=ModelFit.DISCARDED, label="not enough inliers")
             return None
 
-        if self.outliers_ratio(inliers) > self.max_outliers_ratio:
+        outliers_ratio = 1 - sum(inliers)/(np.ptp(np.where(inliers)) + 1)
+        if outliers_ratio > self.max_outliers_ratio:
             self.print(inliers, color=ModelFit.DISCARDED, label="too many outliers")
             return None
 
@@ -261,14 +264,14 @@ class NaiveSlidingWindow(SlidingWindow):
             self.print(model.inliers, color=ModelFit.DISCARDED, label="z < 0")
             return None
 
-        distances3D = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
-        if distances3D.sum() < self.min_distance_3D:
+        distances_cm = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
+        if distances_cm.sum() < self.min_distance_cm:
             self.print(model.inliers, color=ModelFit.DISCARDED, label="3D curve too short")
             return None
 
         position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index:point_index+1])
-        distances2D = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1]) if hasattr(self.window[sample_index], 'ball')]
-        if sum(distances2D) < self.min_distance_2D:
+        distances_px = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1]) if hasattr(self.window[sample_index], 'ball')]
+        if sum(distances_px) < self.min_distance_px:
             self.print(model.inliers, color=ModelFit.DISCARDED, label="2D curve too short")
             return None
 
@@ -276,9 +279,9 @@ class NaiveSlidingWindow(SlidingWindow):
         return model
 
 class BallStateSlidingWindow(SlidingWindow):
-    def __init__(self, *args, min_flyings, **kwargs):
+    def __init__(self, *args, min_flyings=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.min_flyings = min_flyings
+        self.min_flyings = min_flyings or self.window_size//2
 
     def fit(self):
         flyings = [hasattr(s, 'ball') and s.ball.state == BallState.FLYING for s in self.window]
@@ -286,7 +289,8 @@ class BallStateSlidingWindow(SlidingWindow):
             self.print(flyings, color=ModelFit.DISCARDED, label="not enough flying balls")
             return None
 
-        if self.outliers_ratio(flyings) > self.max_outliers_ratio:
+        outliers_ratio = 1 - sum(flyings)/(np.ptp(np.where(flyings)) + 1)
+        if outliers_ratio > self.max_outliers_ratio:
             self.print(flyings, color=ModelFit.DISCARDED, label="too many outliers")
             return None
 
@@ -361,7 +365,8 @@ class MatchTrajectories:
         for sample in gen:
             if hasattr(sample, 'ball') and (new_model := getattr(sample.ball, 'model', None)) != model:
                 if model:
-                    yield Trajectory(samples, trajectory_id)
+                    if len(samples) >= self.min_size:
+                        yield Trajectory(samples, trajectory_id)
                     trajectory_id += 1
                 samples = []
                 model = new_model
