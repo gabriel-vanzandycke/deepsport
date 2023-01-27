@@ -324,6 +324,8 @@ class Trajectory:
     def __sub__(self, other):
         return min(self.end_key.timestamp,   other.end_key.timestamp) \
              - max(self.start_key.timestamp, other.start_key.timestamp)
+    def __len__(self):
+        return len(self.samples)
 
 class MatchTrajectories:
     def __init__(self, min_size=7, TP_cb=None, FP_cb=None, FN_cb=None):
@@ -339,6 +341,23 @@ class MatchTrajectories:
         self.predictions = []
         self.min_size = min_size
 
+    def TP_callback(self, a, p):
+        self.TP.append((a.trajectory_id, p.trajectory_id))
+        self.TP_cb(a, p)
+        self.update_metrics(a, p)
+
+    def FN_callback(self, a, p):
+        if len(a) < self.min_size:
+            return
+        self.FN.append(a.trajectory_id)
+        self.FN_cb(a, p)
+
+    def FP_callback(self, a, p):
+        if len(p) < self.min_size:
+            return
+        self.FP.append(p.trajectory_id)
+        self.FP_cb(a, p)
+
     def update_metrics(self, a: Trajectory, p: Trajectory):
         self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
         self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
@@ -353,8 +372,7 @@ class MatchTrajectories:
             else:
                 self.annotations.append(0)
                 if samples:
-                    if len(samples) >= self.min_size:
-                        yield Trajectory(samples, trajectory_id)
+                    yield Trajectory(samples, trajectory_id)
                     trajectory_id += 1
                 samples = []
 
@@ -365,8 +383,7 @@ class MatchTrajectories:
         for sample in gen:
             if hasattr(sample, 'ball') and (new_model := getattr(sample.ball, 'model', None)) != model:
                 if model:
-                    if len(samples) >= self.min_size:
-                        yield Trajectory(samples, trajectory_id)
+                    yield Trajectory(samples, trajectory_id)
                     trajectory_id += 1
                 samples = []
                 model = new_model
@@ -384,31 +401,23 @@ class MatchTrajectories:
             a = next(agen)
             while True:
                 while a < p:
-                    self.FN.append(a.trajectory_id)
-                    self.FN_cb(a, None)
+                    self.FN_callback(a, None)
                     a = next(agen)
                 while p < a:
-                    self.FP.append(p.trajectory_id)
-                    self.FP_cb(None, p)
+                    self.FP_callback(None, p)
                     p = next(pgen)
                 if a.end_key.timestamp in range(p.start_key.timestamp, p.end_key.timestamp+1):
                     while (a2 := next(agen)) - p > a - p:
-                        self.FN.append(a.trajectory_id)
-                        self.FN_cb(a, p)
+                        self.FN_callback(a, p)
                         a = a2
-                    self.TP.append((a.trajectory_id, p.trajectory_id))
-                    self.TP_cb(a, p)
-                    self.update_metrics(a, p)
+                    self.TP_callback(a, p)
                     p = next(pgen)
                     a = a2
                 elif p.end_key.timestamp in range(a.start_key.timestamp, a.end_key.timestamp+1):
                     while a - (p2 := next(pgen)) > a - p:
-                        self.FP.append(p.trajectory_id)
-                        self.FP_cb(a, p)
+                        self.FP_callback(a, p)
                         p = p2
-                    self.TP.append((a.trajectory_id, p.trajectory_id))
-                    self.TP_cb(a, p)
-                    self.update_metrics(a, p)
+                    self.TP_callback(a, p)
                     a = next(agen)
                     p = p2
                 else:
@@ -417,14 +426,12 @@ class MatchTrajectories:
             # Consume remaining trajectories
             try:
                 while (p := next(pgen)):
-                    self.FP.append(p.trajectory_id)
-                    self.FP_cb(None, p)
+                    self.FP_callback(None, p)
             except StopIteration:
                 pass
             try:
                 while (a := next(agen)):
-                    self.FN.append(a.trajectory_id)
-                    self.FN_cb(a, None)
+                    self.FN_callback(a, None)
             except StopIteration:
                 pass
 
