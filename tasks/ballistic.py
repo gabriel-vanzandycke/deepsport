@@ -343,8 +343,9 @@ class MatchTrajectories:
 
     def TP_callback(self, a, p):
         self.TP.append((a.trajectory_id, p.trajectory_id))
+        self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
+        self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
         self.TP_cb(a, p)
-        self.update_metrics(a, p)
 
     def FN_callback(self, a, p):
         if len(a) < self.min_size:
@@ -357,10 +358,6 @@ class MatchTrajectories:
             return
         self.FP.append(p.trajectory_id)
         self.FP_cb(a, p)
-
-    def update_metrics(self, a: Trajectory, p: Trajectory):
-        self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
-        self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
 
     def extract_annotated_trajectories(self, gen):
         trajectory_id = 1
@@ -406,14 +403,14 @@ class MatchTrajectories:
                 while p < a:
                     self.FP_callback(None, p)
                     p = next(pgen)
-                if a.end_key.timestamp in range(p.start_key.timestamp, p.end_key.timestamp+1):
+                if p.start_key <= a.end_key <= p.end_key:
                     while (a2 := next(agen)) - p > a - p:
                         self.FN_callback(a, p)
                         a = a2
                     self.TP_callback(a, p)
                     p = next(pgen)
                     a = a2
-                elif p.end_key.timestamp in range(a.start_key.timestamp, a.end_key.timestamp+1):
+                elif a.start_key <= p.end_key <= a.end_key:
                     while a - (p2 := next(pgen)) > a - p:
                         self.FP_callback(a, p)
                         p = p2
