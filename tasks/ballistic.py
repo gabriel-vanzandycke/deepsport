@@ -100,7 +100,8 @@ class Fitter:
         model = BallisticModel(result['x'], T0)
         model.inliers = np.array([False]*len(samples))
         model.inliers[indices] = self.inliers_condition(p_error, d_error)
-
+        camera = samples[np.argmax(model.inliers)].ball.camera # camera index of first inlier
+        model.cameras = np.array([(camera := samples[i].ball.camera if model.inliers[i] else camera) for i in range(len(samples))])
         model.indices = np.arange(np.min(np.where(model.inliers)), np.max(np.where(model.inliers))+1) if np.any(model.inliers) else np.array([])
         return model
 
@@ -120,6 +121,8 @@ repr_map = { # true, perd
     (False, False): ' ',
 }
 
+RECOVERED_BALL_ORIGIN = 'fitting'
+
 class SlidingWindow:
     """ Detect ballistic motion by sliding a window over successive ball
         detections using a two terms error: a position error in the image space
@@ -131,28 +134,21 @@ class SlidingWindow:
             max_outliers_ratio (float): trajectories with more than
                 `max_outliers_ratio` outliers (counted between first and last
                 inliers) are discarded.
-            min_distance_cm (int): trajectories shorter than `min_distance_cm`
-                (in world coordinates) are discarded.
-            min_distance_px (int): trajectories shorter than `min_distance_px`
-                (in image space) are discarded.
-            max_inliers_decrease (float): threshold above which, if the number
+            max_inliers_decrease (float): threshold above which, if the ratio
                 of inliers decreases, the trajectory is discarded.
             display (bool): if `True`, display the trajectory in the terminal.
             fitter_kwargs (dict): keyword arguments passed to model `Fitter`.
     """
-    def __init__(self, window_size=None, min_inliers=None, max_outliers_ratio=.8,
-            min_distance_cm=50, min_distance_px=50, max_inliers_decrease=.1,
-            display=False, **fitter_kwargs):
+    def __init__(self, window_size, min_inliers=None, max_outliers_ratio=.4,
+            max_inliers_decrease=.1, display=False, **fitter_kwargs):
+        self.window_size = window_size
         self.window = []
         self.fitter = Fitter(**fitter_kwargs)
         self.max_outliers_ratio = max_outliers_ratio
         self.max_inliers_decrease = max_inliers_decrease
         self.min_inliers = min_inliers or window_size//2
-        self.min_distance_cm = min_distance_cm
-        self.min_distance_px = min_distance_px
         self.popped = 0
         self.display = display
-        self.window_size = window_size or min_inliers
         if self.display:
             for label in ModelFit:
                 print(f"\x1b[3{label}m{label} -", label, "\x1b[0m")
@@ -217,27 +213,29 @@ class SlidingWindow:
 
             # pop model data
             if model: # required if `StopIteration` is raised before `model` is assigned
-                # def callback(i, sample):
-                #     if i in model.indices:
-                #         if not hasattr(sample, 'ball'):
-                #             sample.ball = Ball({
-                #                 'origin': 'model',
-                #                 'center': model(sample.timestamps[0]).tolist(),
-                #                 'timestamp' : sample.timestamps[0],
-                #                 'image': None
-                #             })
-                #         sample.ball.model = model
                 callback = lambda i, s: setattr(setdefaultattr(s, 'ball', Ball({
-                    'origin': 'model',
-                    'center': model(s.timestamps[0]).tolist(),
-                    'timestamp' : s.timestamps[0],
-                    'image': None
+                    'origin': RECOVERED_BALL_ORIGIN,
+                    'center': model(s.timestamps[model.cameras[i]]).tolist(),
+                    'timestamp' : s.timestamps[model.cameras[i]],
+                    'image': model.cameras[i],
                 })), 'model', model if i in model.indices else None)
                 yield from self.pop(np.max(np.where(model.inliers))+1, callback=callback)
 
         yield from self.pop(len(self.window))
 
 class NaiveSlidingWindow(SlidingWindow):
+    """
+        Arguments:
+            min_distance_cm (int): trajectories shorter than `min_distance_cm`
+                (in world coordinates) are discarded.
+            min_distance_px (int): trajectories shorter than `min_distance_px`
+                (in image space) are discarded.
+    """
+    def __init__(self, *args, min_distance_cm=50, min_distance_px=50, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_distance_cm = min_distance_cm
+        self.min_distance_px = min_distance_px
+
     def fit(self):
         model = self.fitter(self.window)
         if model is None:
@@ -279,6 +277,10 @@ class NaiveSlidingWindow(SlidingWindow):
         return model
 
 class BallStateSlidingWindow(SlidingWindow):
+    """
+        Arguments:
+            min_flyings (int): number of flying balls required to fit a model.
+    """
     def __init__(self, *args, min_flyings=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.min_flyings = min_flyings or self.window_size//2
@@ -327,6 +329,23 @@ class Trajectory:
     def __len__(self):
         return len(self.samples)
 
+
+
+def compute_projection_error(calib: Calib, true: Point3D, pred: Point3D):
+    difference = true - pred
+    difference.z = 0 # set z coordinate to 0 to compute projection error on the ground
+    return np.linalg.norm(difference)
+
+def compute_relative_error(calib: Calib, true: Point3D, pred: float):
+    num = np.linalg.norm(true - pred)
+    den = np.linalg.norm(true - calib.C)
+    return num/den
+
+def compute_diameter_error(calib: Calib, true: Point3D, pred: float):
+    true = calib.compute_length2D(true, BALL_DIAMETER)[0]
+    pred = calib.compute_length2D(pred, BALL_DIAMETER)[0]
+    return true - pred
+
 class MatchTrajectories:
     def __init__(self, min_size=7, TP_cb=None, FP_cb=None, FN_cb=None):
         self.TP = []
@@ -340,11 +359,28 @@ class MatchTrajectories:
         self.annotations = []
         self.predictions = []
         self.min_size = min_size
+        self.MAPE = []
+        self.MARE = []
+        self.MADE = []
+        self.recovery = []
 
     def TP_callback(self, a, p):
         self.TP.append((a.trajectory_id, p.trajectory_id))
         self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
         self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
+
+        # compute MAPE, MARE, MADE if ball 3D position was annotated
+        if any([s.ball_annotations and np.abs(s.ball_annotations[0].center.z) > 0.1 for s in a.samples]):
+            a_samples = {s.key: s for s in a.samples if s.ball_annotations}
+            p_samples = {s.key: s for s in p.samples if hasattr(s, 'ball')}
+            keys = set(a_samples.keys()) & set(p_samples.keys())
+            self.MAPE.append([compute_projection_error(a_samples[k].calibs[a_samples[k].ball_annotations[0].camera], a_samples[k].ball_annotations[0].center, p_samples[k].ball.center) for k in keys])
+            self.MARE.append([compute_relative_error(a_samples[k].calibs[a_samples[k].ball_annotations[0].camera], a_samples[k].ball_annotations[0].center, p_samples[k].ball.center) for k in keys])
+            self.MADE.append([compute_diameter_error(a_samples[k].calibs[a_samples[k].ball_annotations[0].camera], a_samples[k].ball_annotations[0].center, p_samples[k].ball.center) for k in keys])
+
+        # compute number of recovered ball detections
+        self.recovery.append(len([s for s in p.samples if s.ball.origin == RECOVERED_BALL_ORIGIN]))
+
         self.TP_cb(a, p)
 
     def FN_callback(self, a, p):
@@ -378,17 +414,21 @@ class MatchTrajectories:
         model = None
         samples = []
         for sample in gen:
-            if hasattr(sample, 'ball') and (new_model := getattr(sample.ball, 'model', None)) != model:
-                if model:
-                    yield Trajectory(samples, trajectory_id)
-                    trajectory_id += 1
-                samples = []
-                model = new_model
-            if model is not None:
-                samples.append(sample)
-                self.predictions.append(trajectory_id)
-            else:
+            # skip samples without ball model
+            if not hasattr(sample, 'ball') or not hasattr(sample.ball, 'model') or sample.ball.model is None:
                 self.predictions.append(0)
+                continue
+
+            # if model changed, yield previous trajectory
+            if sample.ball.model != model and model is not None:
+                yield Trajectory(samples, trajectory_id)
+                trajectory_id += 1
+                samples = []
+
+            model = sample.ball.model
+            samples.append(sample)
+            self.predictions.append(trajectory_id)
+
 
     def __call__(self, agen, pgen):
         pgen = self.extract_predicted_trajectories(pgen)
