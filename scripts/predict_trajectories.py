@@ -1,30 +1,31 @@
 import argparse
-import multiprocess as mp
+import os
+import time
 
 import numpy as np
 from tqdm.auto import tqdm
 import dotenv
 
 from experimentator import find
-from mlworkflow import PickledDataset, TransformedDataset, SideRunner
+from mlworkflow import PickledDataset, TransformedDataset
 import optuna
 
 from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantsDataset
-from deepsport_utilities.utils import VideoMaker
-
-from tasks.ballistic import NaiveSlidingWindow, BallStateSlidingWindow, MatchTrajectories, TrajectoryRenderer, SelectBall
+from tasks.ballistic import NaiveSlidingWindow, BallStateSlidingWindow, MatchTrajectories, SelectBall
 
 dotenv.load_dotenv()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="""""")
     parser.add_argument("positions_dataset")
-    parser.add_argument("--create-video", action='store_true', default=False)
     parser.add_argument("--method", default='baseline', choices=['baseline', 'usestate'])
-    parser.add_argument("--min-size", type=int, default=7)
+    parser.add_argument("--min-duration", type=int, default=250)
+    parser.add_argument("--split-penalty", type=int, default=1)
     parser.add_argument("--n-trials", type=int, default=100)
     parser.add_argument("--show-progress", action='store_true', default=False)
     args = parser.parse_args()
+
+    progress_wrapper = tqdm if args.show_progress else lambda x: x
 
     sds = PickledDataset(find("raw_sequences_dataset.pickle"))
     ids = SequenceInstantsDataset(sds)
@@ -32,49 +33,66 @@ if __name__ == '__main__':
     dds = PickledDataset(find(args.positions_dataset))
     dds = TransformedDataset(dds, [SelectBall('ballseg')])
 
-    SlidingWindow = {
-        'baseline': NaiveSlidingWindow,
-        'usestate': BallStateSlidingWindow
-    }[args.method]
-
     def objective(trial):
-        window_size = 10#trial.suggest_int('window_size', 7, 10)
-        tol = 1#trial.suggest_float('tol', .001, 10, log=True)
-        min_inliers = None#trial.suggest_int('min_inliers', 5, 7)
-        max_outliers_ratio = trial.suggest_float('max_outliers_ratio', .1, .5, step=.1)
-        max_inliers_decrease = trial.suggest_float('max_inliers_decrease', 0, .2, step=.05)
-        d_error_weight = 20#trial.suggest_int('d_error_weight', , 50, step=10)
-        p_error_threshold = trial.suggest_int('p_error_threshold', 4, 10, step=1)
+        trial.set_user_attr('method', args.method)
+        trial.set_user_attr('job_id', os.environ['SLURM_JOB_ID'])
 
-        error_fct = lambda p_error, d_error: np.linalg.norm(p_error) + d_error_weight*np.linalg.norm(d_error)
-        inliers_condition = lambda p_error, d_error: p_error < p_error_threshold
+        d_error_weight    = trial.suggest_int('d_error_weight', 1, 100)
+        p_error_threshold = trial.suggest_int('p_error_threshold', 2, 10)
+        kwargs = dict(
+            min_window_length    = 250,
+            min_inliers          = trial.suggest_int('min_inliers', 2, 8),
+            max_outliers_ratio   = trial.suggest_float('max_outliers_ratio', .1, .5),
+            max_inliers_decrease = trial.suggest_float('max_inliers_decrease', 0, .2),
+            error_fct            = lambda p_error, d_error: np.linalg.norm(p_error) + d_error_weight*np.linalg.norm(d_error),
+            inliers_condition    = lambda p_error, d_error: p_error < p_error_threshold,
+        )
 
-        kwargs = dict(window_size=window_size, tol=tol, min_inliers=min_inliers,
-            max_outliers_ratio=max_outliers_ratio, max_inliers_decrease=max_inliers_decrease,
-            error_fct=error_fct, inliers_condition=inliers_condition)
-
-        if args.method == 'usestate':
-            min_flyings = None#trial.suggest_int('min_flyings', 3, window_size)
-            kwargs.update(min_flyings=min_flyings)
-        elif args.method == 'baseline':
+        if args.method == 'baseline':
             min_distance_cm = 100#trial.suggest_int('min_distance_cm', 50, 100, step=25)
             min_distance_px = 100#trial.suggest_int('min_distance_px', 25, 100, step=25)
             kwargs.update(min_distance_cm=min_distance_cm, min_distance_px=min_distance_px)
+            SlidingWindow = NaiveSlidingWindow
+        elif args.method == 'usestate':
+            min_flyings = None#trial.suggest_int('min_flyings', 3, 8)
+            kwargs.update(min_flyings=min_flyings)
+            SlidingWindow = BallStateSlidingWindow
 
         sw = SlidingWindow(**kwargs)
 
-        compare = MatchTrajectories(min_size=args.min_size)
+        agen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
+        pgen = sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))
 
-        agen = (dds.query_item(k) for k in tqdm(sorted(dds.keys)))
-        pgen = sw((dds.query_item(k) for k in tqdm(sorted(dds.keys))))
+        compare = MatchTrajectories(min_duration=args.min_duration, split_penalty=args.split_penalty)
         compare(agen, pgen)
 
-        return len(compare.TP), len(compare.FP), len(compare.FN)
+        precision = len(compare.TP) / (len(compare.TP) + len(compare.FP))
+        recall = len(compare.TP) / (len(compare.TP) + len(compare.FN))
 
+        trial.set_user_attr('method', args.method)
+        trial.set_user_attr('job_id', os.environ['SLURM_JOB_ID'])
+        trial.set_user_attr('recovered', sum(compare.recovered))
+        trial.set_user_attr('mean_dist_T0', np.mean(compare.dist_T0))
+        trial.set_user_attr('dist_T0', np.mean(np.abs(compare.dist_T0)))
+        trial.set_user_attr('mean_dist_TN', np.mean(compare.dist_TN))
+        trial.set_user_attr('dist_TN', np.mean(np.abs(compare.dist_TN)))
+        trial.set_user_attr('TP', len(compare.TP))
+        trial.set_user_attr('FP', len(compare.FP))
+        trial.set_user_attr('FN', len(compare.FN))
+
+        return precision, recall
+
+    # RDBStorage with sqlite doesn't handle concurrency on NFS storage
+    storage = optuna.storages.JournalStorage(
+        optuna.storages.JournalFileStorage(
+            f"ballistic_{args.method}.db",
+            optuna.storages.JournalFileOpenLock(f"ballistic_{args.method}.db.lock",)
+        )
+    )
     study = optuna.create_study(
         study_name=args.method,
-        directions=['maximize', 'minimize', 'minimize'],
-        storage="sqlite:///ballistic.db",
+        directions=['maximize', 'maximize'],
+        storage=storage,
         load_if_exists=True,
     )
-    study.optimize(objective, n_trials=args.n_trials, show_progress_bar=args.show_progress)
+    study.optimize(objective, n_trials=args.n_trials)
