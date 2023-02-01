@@ -58,6 +58,7 @@ class Fitter:
         self.error_fct = error_fct
         self.inliers_condition = inliers_condition
         self.optimizer_kwargs = optimizer_kwargs
+        self.optimizer_kwargs.setdefault('tol', 1)
 
     def __call__(self, samples):
         indices = [i for i, s in enumerate(samples) if hasattr(s, 'ball')]
@@ -336,8 +337,7 @@ class Trajectory:
         return min(self.end_key.timestamp,   other.end_key.timestamp) \
              - max(self.start_key.timestamp, other.start_key.timestamp)
     def __len__(self):
-        return len(self.samples)
-
+        return self.end_key.timestamp - self.start_key.timestamp
 
 
 def compute_projection_error(true: Point3D, pred: Point3D):
@@ -346,7 +346,7 @@ def compute_projection_error(true: Point3D, pred: Point3D):
     return np.linalg.norm(difference, axis=0)
 
 class MatchTrajectories:
-    def __init__(self, min_size=7, split_penalty=1, TP_cb=None, FP_cb=None, FN_cb=None):
+    def __init__(self, min_duration=250, split_penalty=1, TP_cb=None, FP_cb=None, FN_cb=None):
         self.TP = []
         self.FP = []
         self.FN = []
@@ -357,7 +357,7 @@ class MatchTrajectories:
         self.FN_cb = FN_cb or (lambda a, p: None)
         self.annotations = []
         self.predictions = []
-        self.min_size = min_size
+        self.min_duration = min_duration
         self.detections_MAPE = []
         self.ballistic_MAPE = []
         self.recovered = []
@@ -385,13 +385,13 @@ class MatchTrajectories:
         self.TP_cb(a, p)
 
     def FN_callback(self, a, p):
-        if len(a) < self.min_size:
+        if len(a) < self.min_duration:
             return
         self.FN.extend([a.trajectory_id]*(1 if p is None else self.split_penalty))
         self.FN_cb(a, p)
 
     def FP_callback(self, a, p):
-        if len(p) < self.min_size:
+        if len(p) < self.min_duration:
             return
         self.FP.extend([p.trajectory_id]*(1 if a is None else self.split_penalty))
         self.FP_cb(a, p)
