@@ -291,8 +291,11 @@ class BallStateSlidingWindow(SlidingWindow):
         Arguments:
             min_flyings (int): number of flying balls required to fit a model.
     """
-    def __init__(self, *args, min_flyings=None, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, min_inliers=2, max_outliers_ratio=.22,
+                 max_inliers_decrease=.11, min_flyings=None, **kwargs):
+        super().__init__(*args, min_inliers=min_inliers,
+            max_outliers_ratio=max_outliers_ratio,
+            max_inliers_decrease=max_inliers_decrease, **kwargs)
         self.min_flyings = min_flyings or self.min_inliers
 
     def fit(self):
@@ -362,6 +365,8 @@ class MatchTrajectories:
         self.ballistic_MAPE = []
         self.recovered = []
         self.split_penalty = split_penalty
+        self.splitted_predicted_trajectories = 0
+        self.splitted_annotated_trajectories = 0
 
     def TP_callback(self, a, p):
         self.TP.append((a.trajectory_id, p.trajectory_id))
@@ -388,12 +393,14 @@ class MatchTrajectories:
         if len(a) < self.min_duration:
             return
         self.FN.extend([a.trajectory_id]*(1 if p is None else self.split_penalty))
+        self.splitted_annotated_trajectories += (1 if p is not None else 0)
         self.FN_cb(a, p)
 
     def FP_callback(self, a, p):
         if len(p) < self.min_duration:
             return
         self.FP.extend([p.trajectory_id]*(1 if a is None else self.split_penalty))
+        self.splitted_predicted_trajectories += (1 if a is not None else 0)
         self.FP_cb(a, p)
 
     def extract_annotated_trajectories(self, gen):
