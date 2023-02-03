@@ -104,6 +104,7 @@ class Fitter:
         camera = samples[np.argmax(model.inliers)].ball.camera if np.any(model.inliers) else None # camera index of first inlier
         model.cameras = np.array([(camera := samples[i].ball.camera if model.inliers[i] else camera) for i in range(len(samples))])
         model.indices = np.arange(np.min(np.where(model.inliers)), np.max(np.where(model.inliers))+1) if np.any(model.inliers) else np.array([])
+        model.TN = samples[np.max(np.where(model.inliers)[0])].ball.timestamp if np.any(model.inliers) else None # timestamp of last inlier
         return model
 
 
@@ -141,23 +142,29 @@ class SlidingWindow:
                 inliers) are discarded.
             max_inliers_decrease (float): threshold above which, if the ratio
                 of inliers decreases, the trajectory is discarded.
+            min_distance_cm (int): trajectories shorter than `min_distance_cm`
+                (in world coordinates) are discarded.
+            min_distance_px (int): trajectories shorter than `min_distance_px`
+                (in image space) are discarded.
             display (bool): if `True`, display the trajectory in the terminal.
             fitter_kwargs (dict): keyword arguments passed to model `Fitter`.
     """
-    def __init__(self, min_window_length, min_inliers, max_outliers_ratio=.4,
-            max_inliers_decrease=.1, display=False, **fitter_kwargs):
+    def __init__(self, min_window_length, *, min_inliers, max_outliers_ratio=.4,
+            max_inliers_decrease=.1, min_distance_cm=50, min_distance_px=50,
+            display=False, **fitter_kwargs):
         self.min_window_length = min_window_length
         self.window = Window()
         self.fitter = Fitter(**fitter_kwargs)
         self.max_outliers_ratio = max_outliers_ratio
         self.max_inliers_decrease = max_inliers_decrease
         self.min_inliers = min_inliers
-        self.popped = 0
+        self.min_distance_cm = min_distance_cm
+        self.min_distance_px = min_distance_px
         self.display = display
         if self.display:
             for label in ModelFit:
                 print(f"\x1b[3{label}m{label} -", label, "\x1b[0m")
-
+    popped = 0
     def pop(self, count=1, callback=None):
         for i in range(count):
             sample = self.window.pop(0)
@@ -179,7 +186,44 @@ class SlidingWindow:
                 self.popped = 0
 
     def fit(self):
-        raise NotImplementedError
+        model = self.fitter(self.window)
+        if model is None:
+            self.print([False]*len(self.window), color=ModelFit.NO_MODEL)
+            return None
+
+        inliers = model.inliers
+        if sum(inliers) < self.min_inliers:
+            self.print(inliers, color=ModelFit.DISCARDED, label="not enough inliers")
+            return None
+
+        outliers_ratio = 1 - sum(inliers)/(np.ptp(np.where(inliers)) + 1)
+        if outliers_ratio > self.max_outliers_ratio:
+            self.print(inliers, color=ModelFit.DISCARDED, label="too many outliers")
+            return None
+
+        if not inliers[0]:
+            self.print(inliers, color=ModelFit.DISCARDED, label="first sample is not an inlier")
+            return None
+
+        timestamps = np.array([self.window[i].ball.timestamp for i in model.indices if hasattr(self.window[i], 'ball')])
+        points3D = model(timestamps)
+        if points3D.z.max() > 0: # ball is under the ground (z points down)
+            self.print(model.inliers, color=ModelFit.DISCARDED, label="z < 0")
+            return None
+
+        distances_cm = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
+        if distances_cm.sum() < self.min_distance_cm:
+            self.print(model.inliers, color=ModelFit.DISCARDED, label="3D curve too short")
+            return None
+
+        position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index:point_index+1])
+        distances_px = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1]) if hasattr(self.window[sample_index], 'ball')]
+        if sum(distances_px) < self.min_distance_px:
+            self.print(model.inliers, color=ModelFit.DISCARDED, label="2D curve too short")
+            return None
+
+        self.print(model.inliers, color=ModelFit.PROPOSED, label='(inliers)')
+        return model
 
     """
         Inputs: generator of `Sample`s (containing ball detections or not)
@@ -233,70 +277,17 @@ class SlidingWindow:
 
         yield from self.pop(len(self.window))
 
-class NaiveSlidingWindow(SlidingWindow):
-    """
-        Arguments:
-            min_distance_cm (int): trajectories shorter than `min_distance_cm`
-                (in world coordinates) are discarded.
-            min_distance_px (int): trajectories shorter than `min_distance_px`
-                (in image space) are discarded.
-    """
-    def __init__(self, *args, min_distance_cm=50, min_distance_px=50, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.min_distance_cm = min_distance_cm
-        self.min_distance_px = min_distance_px
-
-    def fit(self):
-        model = self.fitter(self.window)
-        if model is None:
-            self.print([False]*len(self.window), color=ModelFit.NO_MODEL)
-            return None
-
-        inliers = model.inliers
-        if sum(inliers) < self.min_inliers:
-            self.print(inliers, color=ModelFit.DISCARDED, label="not enough inliers")
-            return None
-
-        outliers_ratio = 1 - sum(inliers)/(np.ptp(np.where(inliers)) + 1)
-        if outliers_ratio > self.max_outliers_ratio:
-            self.print(inliers, color=ModelFit.DISCARDED, label="too many outliers")
-            return None
-
-        if not inliers[0]:
-            self.print(inliers, color=ModelFit.DISCARDED, label="first sample is not an inlier")
-            return None
-
-        timestamps = np.array([self.window[i].ball.timestamp for i in model.indices if hasattr(self.window[i], 'ball')])
-        points3D = model(timestamps)
-        if points3D.z.max() > 0: # ball is under the ground (z points down)
-            self.print(model.inliers, color=ModelFit.DISCARDED, label="z < 0")
-            return None
-
-        distances_cm = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
-        if distances_cm.sum() < self.min_distance_cm:
-            self.print(model.inliers, color=ModelFit.DISCARDED, label="3D curve too short")
-            return None
-
-        position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index:point_index+1])
-        distances_px = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1]) if hasattr(self.window[sample_index], 'ball')]
-        if sum(distances_px) < self.min_distance_px:
-            self.print(model.inliers, color=ModelFit.DISCARDED, label="2D curve too short")
-            return None
-
-        self.print(model.inliers, color=ModelFit.PROPOSED)
-        return model
-
 class BallStateSlidingWindow(SlidingWindow):
     """
         Arguments:
             min_flyings (int): number of flying balls required to fit a model.
+            max_nonflyings_ratio (float): maximum ratio of non-flying balls,
+                computed between the first and last sample classified as flying.
     """
-    def __init__(self, *args, min_inliers=2, max_outliers_ratio=.22,
-                 max_inliers_decrease=.11, min_flyings=None, **kwargs):
-        super().__init__(*args, min_inliers=min_inliers,
-            max_outliers_ratio=max_outliers_ratio,
-            max_inliers_decrease=max_inliers_decrease, **kwargs)
-        self.min_flyings = min_flyings or self.min_inliers
+    def __init__(self, *, min_flyings, max_nonflyings_ratio, **kwargs):
+        super().__init__(**kwargs)
+        self.min_flyings = min_flyings
+        self.max_nonflyings_ratio = max_nonflyings_ratio
 
     def fit(self):
         flyings = [hasattr(s, 'ball') and s.ball.state == BallState.FLYING for s in self.window]
@@ -304,24 +295,35 @@ class BallStateSlidingWindow(SlidingWindow):
             self.print(flyings, color=ModelFit.DISCARDED, label="not enough flying balls")
             return None
 
-        outliers_ratio = 1 - sum(flyings)/(np.ptp(np.where(flyings)) + 1)
-        if outliers_ratio > self.max_outliers_ratio:
-            self.print(flyings, color=ModelFit.DISCARDED, label="too many outliers")
+        nonflyings_ratio = 1 - sum(flyings)/(np.ptp(np.where(flyings)) + 1)
+        if nonflyings_ratio > self.max_nonflyings_ratio:
+            self.print(flyings, color=ModelFit.DISCARDED, label="too many non-flyings")
             return None
 
-        model = self.fitter(self.window)
-        if model is None:
-            self.print(flyings, color=ModelFit.NO_MODEL)
-            return None
-
-        inliers = model.inliers
-        if sum(inliers) < self.min_inliers:
-            self.print(inliers, color=ModelFit.DISCARDED, label="not enough inliers")
-            return None
-
-        self.print(model.inliers, color=ModelFit.PROPOSED, label='(inliers)')
-        self.print(flyings, color=ModelFit.PROPOSED, label='(flyings)')
+        model = super().fit()
+        if self.min_flyings:
+            self.print(flyings, color=ModelFit.PROPOSED, label='(flyings)')
         return model
+
+
+def model(*, min_window_length, min_inliers, max_outliers_ratio,
+    max_inliers_decrease, min_distance_cm, min_distance_px,
+    min_flyings, max_nonflyings_ratio,
+    d_error_weight, p_error_threshold, scale, **kwargs):
+
+    return BallStateSlidingWindow(
+        min_window_length=min_window_length,
+        min_inliers=min_inliers,
+        max_outliers_ratio=max_outliers_ratio,
+        max_inliers_decrease=max_inliers_decrease,
+        min_distance_cm=min_distance_cm,
+        min_distance_px=min_distance_px,
+        min_flyings=min_flyings,
+        max_nonflyings_ratio=max_nonflyings_ratio,
+        inliers_condition = lambda p_error, d_error: p_error < p_error_threshold * (1 + scale*np.sin(np.linspace(0, np.pi, len(p_error)))),
+        error_fct = lambda p_error, d_error: d_error_weight*d_error + p_error,
+        **kwargs,
+    )
 
 
 class Trajectory:
@@ -349,29 +351,29 @@ def compute_projection_error(true: Point3D, pred: Point3D):
     return np.linalg.norm(difference, axis=0)
 
 class MatchTrajectories:
-    def __init__(self, min_duration=250, split_penalty=1, TP_cb=None, FP_cb=None, FN_cb=None):
+    def __init__(self, min_duration=250, callback=None):
         self.TP = []
         self.FP = []
         self.FN = []
         self.dist_T0 = []
         self.dist_TN = []
-        self.TP_cb = TP_cb or (lambda a, p: None)
-        self.FP_cb = FP_cb or (lambda a, p: None)
-        self.FN_cb = FN_cb or (lambda a, p: None)
+        self.callback = callback or (lambda a, p, t: None)
         self.annotations = []
         self.predictions = []
         self.min_duration = min_duration
         self.detections_MAPE = []
         self.ballistic_MAPE = []
         self.recovered = []
-        self.split_penalty = split_penalty
         self.splitted_predicted_trajectories = 0
         self.splitted_annotated_trajectories = 0
+        self.overlap = []
 
     def TP_callback(self, a, p):
         self.TP.append((a.trajectory_id, p.trajectory_id))
         self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
         self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
+        self.recovered.append(len([s for s in p.samples if s.ball.origin == RECOVERED_BALL_ORIGIN]))
+        self.overlap.append(a - p)
 
         # compute MAPE, MARE, MADE if ball 3D position was annotated
         if any([s.ball_annotations and np.abs(s.ball_annotations[0].center.z) > 0.1 for s in a.samples]):
@@ -384,24 +386,21 @@ class MatchTrajectories:
             self.detections_MAPE.extend(compute_projection_error(annotated_ball3D, detected_ball3D))
             self.ballistic_MAPE.extend(compute_projection_error(annotated_ball3D, ballistic_ball3D))
 
-        # compute number of recovered ball detections
-        self.recovered.append(len([s for s in p.samples if s.ball.origin == RECOVERED_BALL_ORIGIN]))
-
-        self.TP_cb(a, p)
+        self.callback(a, p, 'TP')
 
     def FN_callback(self, a, p):
+        self.splitted_annotated_trajectories += (1 if p is not None else 0)
         if len(a) < self.min_duration:
             return
-        self.FN.extend([a.trajectory_id]*(1 if p is None else self.split_penalty))
-        self.splitted_annotated_trajectories += (1 if p is not None else 0)
-        self.FN_cb(a, p)
+        self.FN.append(a.trajectory_id)
+        self.callback(a, p, 'FN')
 
     def FP_callback(self, a, p):
+        self.splitted_predicted_trajectories += (1 if a is not None else 0)
         if len(p) < self.min_duration:
             return
-        self.FP.extend([p.trajectory_id]*(1 if a is None else self.split_penalty))
-        self.splitted_predicted_trajectories += (1 if a is not None else 0)
-        self.FP_cb(a, p)
+        self.FP.append(p.trajectory_id)
+        self.callback(a, p, 'FP')
 
     def extract_annotated_trajectories(self, gen):
         trajectory_id = 1
@@ -444,23 +443,33 @@ class MatchTrajectories:
             p = next(pgen)
             a = next(agen)
             while True:
+                # skip annotated and predicted trajectories until an overlap is found
                 while a < p:
                     self.FN_callback(a, None)
                     a = next(agen)
                 while p < a:
                     self.FP_callback(None, p)
                     p = next(pgen)
+
                 if p.start_key <= a.end_key <= p.end_key:
-                    while (a2 := next(agen)) - p > a - p:
-                        self.FN_callback(a, p)
-                        a = a2
+                    # keep the annotated trajectory that maximizes the overlap with the predicted trajectory
+                    while (a2 := next(agen)).start_key <= p.end_key:
+                        if a2 - p > a - p:
+                            self.FN_callback(a, p)
+                            a = a2
+                        else:
+                            self.FN_callback(a2, p)
                     self.TP_callback(a, p)
                     p = next(pgen)
                     a = a2
                 elif a.start_key <= p.end_key <= a.end_key:
-                    while a - (p2 := next(pgen)) > a - p:
-                        self.FP_callback(a, p)
-                        p = p2
+                    # keep the predicted trajectory that maximizes the overlap with the annotated trajectory
+                    while (p2 := next(pgen)).start_key <= a.end_key:
+                        if p2 - a > p - a:
+                            self.FP_callback(a, p)
+                            p = p2
+                        else:
+                            self.FP_callback(a, p2)
                     self.TP_callback(a, p)
                     a = next(agen)
                     p = p2
@@ -479,16 +488,37 @@ class MatchTrajectories:
             except StopIteration:
                 pass
 
+    @property
+    def metrics(self):
+        mean = lambda x: np.mean(x) if np.any(x) else np.nan
+        return {
+            'TP': len(self.TP),
+            'FP': len(self.FP),
+            'FN': len(self.FN),
+            'recovered': sum(self.recovered),
+            'overlap': sum(self.overlap),
+            'mean_dist_T0': mean(self.dist_T0),
+            'dist_T0': mean(np.abs(self.dist_T0)),
+            'mean_dist_TN': mean(self.dist_TN),
+            'dist_TN': mean(np.abs(self.dist_TN)),
+            'precision': len(self.TP) / (len(self.TP) + len(self.FP)) if len(self.TP) + len(self.FP) > 0 else 0,
+            'recall': len(self.TP) / (len(self.TP) + len(self.FN)) if len(self.TP) + len(self.FN) > 0 else 0,
+            'splitted_predicted_trajectories': self.splitted_predicted_trajectories,
+            'splitted_annotated_trajectories': self.splitted_annotated_trajectories,
+            'ballistic_MAPE': mean(self.ballistic_MAPE),
+            'detections_MAPE': mean(self.detections_MAPE),
+        }
 
-class TrajectoryRenderer():
-    def __init__(self, ids: InstantsDataset, margin: int=0):
+
+class InstantRenderer():
+    def __init__(self, ids: InstantsDataset, min_duration: int):
         self.ids = ids
-        self.margin = margin
+        self.min_duration = min_duration
 
     def draw_ball(self, pd, image, ball, color=None, label=None):
         color = color or pd.color
         ground3D = Point3D(ball.center.x, ball.center.y, 0)
-        pd.polylines(image, Point3D([ball.center, ground3D]), lineType=cv2.LINE_AA, color=color)
+        pd.draw_line(image, ball.center,               ground3D,                  lineType=cv2.LINE_AA, color=color)
         pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), lineType=cv2.LINE_AA, thickness=1, color=color)
         pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), lineType=cv2.LINE_AA, thickness=1, color=color)
         center = pd.calib.project_3D_to_2D(ball.center).to_int_tuple()
@@ -498,37 +528,43 @@ class TrajectoryRenderer():
         if label is not None:
             cv2.putText(image, label, center, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
-    def __call__(self, trajectory: Trajectory):
-        for sample in trajectory.samples:
-            key = sample.key
-            instant = self.ids.query_item(key)
+    def __call__(self, sample):
+        instant = self.ids.query_item(sample.key)
+        for image, calib in zip(instant.images, instant.calibs):
+            pd = ProjectiveDrawer(calib, (0, 120, 255), segments=1)
 
-            for image, calib in zip(instant.images, instant.calibs):
-                pd = ProjectiveDrawer(calib, (0, 120, 255), segments=1)
-
-                if hasattr(sample, "ball"):
-                    ball = sample.ball
+            if ball := getattr(sample, "ball", None):
+                if model := getattr(ball, "model", None):
                     self.draw_ball(pd, image, ball, label=str(ball.state))
+                    pd.color = (250, 195, 0) if model.TN - model.T0 > self.min_duration else (250, 200, 30)
+                    timestamps = np.linspace(model.T0, model.TN, int(np.ceil((model.TN-model.T0+1)/10)))
+                    points3D = model(timestamps)
+                    ground3D = Point3D(points3D.x, points3D.y, np.zeros_like(points3D.x))
+                    start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
+                    stop  = Point3D(np.vstack([points3D[:, -1], ground3D[:, -1]]).T)
+                    for line in [points3D, ground3D, start, stop]:
+                        pd.polylines(image, line, lineType=cv2.LINE_AA)
+                elif sample.ball_state == BallState.FLYING:
+                    self.draw_ball(pd, image, ball, color=(255, 0, 0), label=str(ball.state))
 
-                    if hasattr(ball, "model") and ball.model is not None:
-                        pd.color = (250, 195, 0)
-                        model = ball.model
-                        timestamps = np.array([sample.ball.timestamp for sample in trajectory.samples if hasattr(sample, 'ball') and hasattr(sample.ball, 'timestamp')])
-                        points3D = model(timestamps)
-                        ground3D = Point3D(points3D.x, points3D.y, np.zeros_like(points3D.x))
-                        start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
-                        stop  = Point3D(np.vstack([points3D[:, -1], ground3D[:, -1]]).T)
-                        for line in [points3D, ground3D, start, stop]:
-                            pd.polylines(image, line, lineType=cv2.LINE_AA)
+            # draw ball annotation if any
+            if sample.ball_annotations:
+                ball = sample.ball_annotations[0]
+                if ball.center.z < -0.01: # z pointing down
+                    color = (0, 255, 20)
+                    self.draw_ball(pd, image, ball, color=color)
+            cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 20), lineType=cv2.LINE_AA)
+        return np.hstack(instant.images)
 
-                # draw ball annotation if any
-                if sample.ball_annotations:
-                    ball = sample.ball_annotations[0]
-                    if ball.center.z < -0.01: # z pointing down
-                        color = (0, 255, 20)
-                        self.draw_ball(pd, image, ball, color=color)
-                cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 20), lineType=cv2.LINE_AA)
-            yield np.hstack(instant.images)
+class TrajectoryRenderer():
+    def __call__(self, annotated: Trajectory, predicted: Trajectory):
+        annotated_trajectory_samples = {sample.key: sample for sample in annotated.samples} if annotated else {}
+        predicted_trajectory_samples = {sample.key: sample for sample in predicted.samples} if predicted else {}
+        samples = {**annotated_trajectory_samples, **predicted_trajectory_samples} # prioritize predicted trajectory samples
+        for key, sample in samples.items():
+            instant = self.ids.query_item(key)
+            yield super().__call__(instant, sample)
+
 
 
     # model = None
@@ -602,3 +638,5 @@ class SelectBall:
         except ValueError:
             pass
         return item
+
+
