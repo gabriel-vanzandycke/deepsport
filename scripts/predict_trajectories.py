@@ -2,21 +2,22 @@ import argparse
 import os
 
 import dotenv
-import numpy as np
 import optuna
+from optuna.integration.wandb import WeightsAndBiasesCallback
 from tqdm.auto import tqdm
+import wandb
 
 from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
 
-from tasks.ballistic import BallStateSlidingWindow, MatchTrajectories, SelectBall
+from tasks.ballistic import model, MatchTrajectories, SelectBall
 
 dotenv.load_dotenv()
 
 parameters = {
     "min_inliers":             ("suggest_int",   {'low':  1, 'high':   8, 'step':  1}),
     "max_outliers_ratio":      ("suggest_float", {'low': .1, 'high':  .8, 'step':.01}),
-    "min_flyings":             ("suggest_int",   {'low':  1, 'high':   8, 'step':  1}),
+    "min_flyings":             ("suggest_int",   {'low':  0, 'high':   8, 'step':  1}),
     "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':  .8, 'step': .1}),
     "max_inliers_decrease": ('fixed', .1),#("suggest_float", {'low':  0, 'high':  .2, 'step':.05}),
     "scale":                   ("suggest_float", {'low': -1, 'high':   2, 'step': .5}),
@@ -45,21 +46,30 @@ if __name__ == '__main__':
         fixed_kwargs.update(min_flyings=0)
         fixed_kwargs.update(max_nonflyings_ratio=0)
 
+    objectives = {
+        'overlap': 'maximize',
+        'splitted_predicted_trajectories': 'minimize',
+        #'FP': 'minimize'
+    }
+
     def objective(trial):
         trial.set_user_attr('method', args.method)
-        trial.set_user_attr('job_id', os.environ['SLURM_JOB_ID'])
+        trial.set_user_attr('job_id', os.environ.get('SLURM_JOB_ID', None))
 
         kwargs = fixed_kwargs.copy()
         for name, (suggest_fct, params) in parameters.items():
             if name not in kwargs:
-                kwargs.update({name: getattr(trial, suggest_fct)(name, **params)})
+                if suggest_fct == 'fixed':
+                    kwargs.update({name: params})
+                else:
+                    kwargs.update({name: getattr(trial, suggest_fct)(name, **params)})
 
         progress_wrapper = tqdm if args.show_progress else lambda x: x
 
         dds = PickledDataset(find(args.positions_dataset))
         dds = TransformedDataset(dds, [SelectBall('ballseg')])
 
-        sw = BallStateSlidingWindow(**kwargs)
+        sw = model(**kwargs)
 
         agen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
         pgen = sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))
@@ -69,8 +79,10 @@ if __name__ == '__main__':
 
         for key, value in compare.metrics.items():
             trial.set_user_attr(key, value)
+        for key, value in kwargs.items():
+            trial.set_user_attr(key, value)
 
-        return compare.metrics['overlap'], compare.metrics['splitted_predicted_trajectories']
+        return tuple(compare.metrics[name] for name in objectives)
 
 
     # RDBStorage with sqlite doesn't handle concurrency on NFS storage
@@ -82,9 +94,15 @@ if __name__ == '__main__':
     )
     study = optuna.create_study(
         study_name=args.method,
-        directions=['maximize', 'minimize'],
+        directions=objectives.values(),
         storage=storage,
         load_if_exists=True,
     )
 
-    study.optimize(objective, n_trials=args.n_trials)
+    wandb_kwargs = dict(
+        project="ballistic",
+        reinit=True,
+        settings=wandb.Settings(show_emoji=False, _save_requirements=False)
+    )
+    wandbc = WeightsAndBiasesCallback(list(objectives.keys()), wandb_kwargs=wandb_kwargs, as_multirun=True)
+    study.optimize(objective, n_trials=args.n_trials, callbacks=[wandbc])
