@@ -104,7 +104,6 @@ class Fitter:
         camera = samples[np.argmax(model.inliers)].ball.camera if np.any(model.inliers) else None # camera index of first inlier
         model.cameras = np.array([(camera := samples[i].ball.camera if model.inliers[i] else camera) for i in range(len(samples))])
         model.indices = np.arange(np.min(np.where(model.inliers)), np.max(np.where(model.inliers))+1) if np.any(model.inliers) else np.array([])
-        model.TN = samples[np.max(np.where(model.inliers)[0])].ball.timestamp if np.any(model.inliers) else None # timestamp of last inlier
         return model
 
 
@@ -192,6 +191,10 @@ class SlidingWindow:
             return None
 
         inliers = model.inliers
+        if not inliers[0]:
+            self.print(inliers, color=ModelFit.DISCARDED, label="first sample is not an inlier")
+            return None
+
         if sum(inliers) < self.min_inliers:
             self.print(inliers, color=ModelFit.DISCARDED, label="not enough inliers")
             return None
@@ -199,10 +202,6 @@ class SlidingWindow:
         outliers_ratio = 1 - sum(inliers)/(np.ptp(np.where(inliers)) + 1)
         if outliers_ratio > self.max_outliers_ratio:
             self.print(inliers, color=ModelFit.DISCARDED, label="too many outliers")
-            return None
-
-        if not inliers[0]:
-            self.print(inliers, color=ModelFit.DISCARDED, label="first sample is not an inlier")
             return None
 
         timestamps = np.array([self.window[i].ball.timestamp for i in model.indices if hasattr(self.window[i], 'ball')])
@@ -267,6 +266,8 @@ class SlidingWindow:
 
             # pop model data
             if model: # required if `StopIteration` is raised before `model` is assigned
+                model.start_timestamp = self.window[model.indices[0]].ball.timestamp
+                model.end_timestamp = self.window[model.indices[-1]].ball.timestamp
                 callback = lambda i, s: setattr(setdefaultattr(s, 'ball', Ball({
                     'origin': RECOVERED_BALL_ORIGIN,
                     'center': model(s.timestamps[model.cameras[i]]).tolist(),
@@ -295,13 +296,13 @@ class BallStateSlidingWindow(SlidingWindow):
             self.print(flyings, color=ModelFit.DISCARDED, label="not enough flying balls")
             return None
 
-        nonflyings_ratio = 1 - sum(flyings)/(np.ptp(np.where(flyings)) + 1)
+        nonflyings_ratio = 1 - sum(flyings)/(np.ptp(np.where(flyings)) + 1) if np.any(flyings) else 0
         if nonflyings_ratio > self.max_nonflyings_ratio:
             self.print(flyings, color=ModelFit.DISCARDED, label="too many non-flyings")
             return None
 
         model = super().fit()
-        if self.min_flyings:
+        if model and self.min_flyings:
             self.print(flyings, color=ModelFit.PROPOSED, label='(flyings)')
         return model
 
@@ -321,7 +322,7 @@ def model(*, min_window_length, min_inliers, max_outliers_ratio,
         min_flyings=min_flyings,
         max_nonflyings_ratio=max_nonflyings_ratio,
         inliers_condition = lambda p_error, d_error: p_error < p_error_threshold * (1 + scale*np.sin(np.linspace(0, np.pi, len(p_error)))),
-        error_fct = lambda p_error, d_error: d_error_weight*d_error + p_error,
+        error_fct = lambda p_error, d_error: np.linalg.norm(p_error) + d_error_weight*np.linalg.norm(d_error),
         **kwargs,
     )
 
@@ -536,8 +537,9 @@ class InstantRenderer():
             if ball := getattr(sample, "ball", None):
                 if model := getattr(ball, "model", None):
                     self.draw_ball(pd, image, ball, label=str(ball.state))
-                    pd.color = (250, 195, 0) if model.TN - model.T0 > self.min_duration else (250, 200, 30)
-                    timestamps = np.linspace(model.T0, model.TN, int(np.ceil((model.TN-model.T0+1)/10)))
+                    duration = model.end_timestamp - model.start_timestamp
+                    pd.color = (250, 195, 0) if duration > self.min_duration else (250, 200, 30)
+                    timestamps = np.linspace(model.start_timestamp, model.end_timestamp, int(np.ceil(duration/10)))
                     points3D = model(timestamps)
                     ground3D = Point3D(points3D.x, points3D.y, np.zeros_like(points3D.x))
                     start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
@@ -556,7 +558,7 @@ class InstantRenderer():
             cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 20), lineType=cv2.LINE_AA)
         return np.hstack(instant.images)
 
-class TrajectoryRenderer():
+class TrajectoryRenderer(InstantRenderer):
     def __call__(self, annotated: Trajectory, predicted: Trajectory):
         annotated_trajectory_samples = {sample.key: sample for sample in annotated.samples} if annotated else {}
         predicted_trajectory_samples = {sample.key: sample for sample in predicted.samples} if predicted else {}
