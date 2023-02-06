@@ -302,7 +302,7 @@ class BallStateSlidingWindow(SlidingWindow):
             return None
 
         model = super().fit()
-        if model and self.min_flyings:
+        if model and (self.min_flyings or self.max_nonflyings_ratio):
             self.print(flyings, color=ModelFit.PROPOSED, label='(flyings)')
         return model
 
