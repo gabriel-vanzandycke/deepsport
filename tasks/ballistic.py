@@ -342,6 +342,9 @@ class Trajectory:
     def __sub__(self, other):
         return min(self.end_key.timestamp,   other.end_key.timestamp) \
              - max(self.start_key.timestamp, other.start_key.timestamp)
+    def __add__(self, other):
+        return max(self.end_key.timestamp,   other.end_key.timestamp) \
+             - min(self.start_key.timestamp, other.start_key.timestamp)
     def __len__(self):
         return self.end_key.timestamp - self.start_key.timestamp
 
@@ -368,6 +371,8 @@ class MatchTrajectories:
         self.splitted_predicted_trajectories = 0
         self.splitted_annotated_trajectories = 0
         self.overlap = []
+        self.union = []
+        self.intersection = []
 
     def TP_callback(self, a, p):
         self.TP.append((a.trajectory_id, p.trajectory_id))
@@ -375,6 +380,8 @@ class MatchTrajectories:
         self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
         self.recovered.append(len([s for s in p.samples if s.ball.origin == RECOVERED_BALL_ORIGIN]))
         self.overlap.append(a - p)
+        self.intersection.append(a - p)
+        self.union.append(a + p)
 
         # compute MAPE, MARE, MADE if ball 3D position was annotated
         if any([s.ball_annotations and np.abs(s.ball_annotations[0].center.z) > 0.1 for s in a.samples]):
@@ -390,6 +397,11 @@ class MatchTrajectories:
         self.callback(a, p, 'TP')
 
     def FN_callback(self, a, p):
+        if p is not None:
+            self.intersection.append(a - p)
+            self.union.append(a + p)
+        else:
+            self.union.append(len(a))
         self.splitted_annotated_trajectories += (1 if p is not None else 0)
         if len(a) < self.min_duration:
             return
@@ -397,6 +409,11 @@ class MatchTrajectories:
         self.callback(a, p, 'FN')
 
     def FP_callback(self, a, p):
+        if a is not None:
+            self.intersection.append(a - p)
+            self.union.append(a + p)
+        else:
+            self.union.append(len(p))
         self.splitted_predicted_trajectories += (1 if a is not None else 0)
         if len(p) < self.min_duration:
             return
@@ -508,6 +525,7 @@ class MatchTrajectories:
             'splitted_annotated_trajectories': self.splitted_annotated_trajectories,
             'ballistic_MAPE': mean(self.ballistic_MAPE),
             'detections_MAPE': mean(self.detections_MAPE),
+            'IoU': sum(self.intersection)/sum(self.union),
         }
 
 
