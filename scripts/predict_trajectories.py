@@ -15,16 +15,17 @@ from tasks.ballistic import model, MatchTrajectories, SelectBall
 dotenv.load_dotenv()
 
 parameters = {
-    "min_inliers":             ("suggest_int",   {'low':  1, 'high':   8, 'step':  1}),
-    "max_outliers_ratio":      ("suggest_float", {'low': .1, 'high':  .8, 'step':.01}),
-    "min_flyings":             ("suggest_int",   {'low':  0, 'high':   8, 'step':  1}),
-    "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':  .8, 'step': .1}),
+    "min_inliers":             ("suggest_int",   {'low':  0, 'high':   8, 'step':  1}),
+    "max_outliers_ratio":      ("suggest_float", {'low': .1, 'high':  .9, 'step':.01}),
+    "min_flyings":             ("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
+    "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':  .9, 'step': .1}),
     "max_inliers_decrease": ('fixed', .1),#("suggest_float", {'low':  0, 'high':  .2, 'step':.05}),
     "scale":                   ("suggest_float", {'low': -1, 'high':   2, 'step': .5}),
-    "p_error_threshold":       ("suggest_int",   {'low':  1, 'high':   6, 'step':  1}),
+    "p_error_threshold":       ("suggest_int",   {'low':  1, 'high':  10, 'step':  1}),
     "d_error_weight":          ("suggest_int",   {'low':  0, 'high': 100, 'step': 10}),
-    "min_distance_cm":   ('fixed', 100),#   ("suggest_int",   {'low': 50, 'high': 100, 'step': 25}),
-    "min_distance_px":   ('fixed', 100),#   ("suggest_int",   {'low': 25, 'high': 100, 'step': 25}),
+    "min_distance_cm":         ("suggest_int",   {'low': 50, 'high': 500, 'step': 50}),
+    "min_distance_px":         ("suggest_int",   {'low': 50, 'high': 500, 'step': 50}),
+    "min_window_length":       ("suggest_int",   {'low':160, 'high': 350, 'step': 10}),
 }
 
 if __name__ == '__main__':
@@ -40,15 +41,16 @@ if __name__ == '__main__':
 
     cast = lambda k, v: (k, eval(v))
     fixed_kwargs = dict([cast(*kwarg.split('=')) for kwarg in args.kwargs])
-    fixed_kwargs.update(min_window_length=args.min_duration)
 
     if args.method == 'baseline':
         fixed_kwargs.update(min_flyings=0)
         fixed_kwargs.update(max_nonflyings_ratio=0)
 
     objectives = {
-        'overlap': 'maximize',
-        'splitted_predicted_trajectories': 'minimize',
+        'IoU': 'maximize',
+        'ballistic_MAPE': 'minimize'
+        #'overlap': 'maximize',
+        #'splitted_predicted_trajectories': 'minimize',
         #'FP': 'minimize'
     }
 
@@ -89,7 +91,7 @@ if __name__ == '__main__':
     filename = f"ballistic_{args.name}_{args.method}.db"
     storage = optuna.storages.JournalStorage(
         optuna.storages.JournalFileStorage(filename,
-            optuna.storages.JournalFileOpenLock(filename + ".lock")
+            optuna.storages.JournalFileOpenLock(filename)
         )
     )
     study = optuna.create_study(
@@ -99,10 +101,12 @@ if __name__ == '__main__':
         load_if_exists=True,
     )
 
-    wandb_kwargs = dict(
-        project="ballistic",
-        reinit=True,
-        settings=wandb.Settings(show_emoji=False, _save_requirements=False)
-    )
-    wandbc = WeightsAndBiasesCallback(list(objectives.keys()), wandb_kwargs=wandb_kwargs, as_multirun=True)
-    study.optimize(objective, n_trials=args.n_trials, callbacks=[wandbc])
+    # wandb_kwargs = dict(
+    #     project="ballistic",
+    #     reinit=True,
+    #     settings=wandb.Settings(show_emoji=False, _save_requirements=False)
+    # )
+    callbacks = [
+        #WeightsAndBiasesCallback(list(objectives.keys()), wandb_kwargs=wandb_kwargs, as_multirun=True),
+    ]
+    study.optimize(objective, n_trials=args.n_trials, callbacks=callbacks)
