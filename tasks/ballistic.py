@@ -105,13 +105,19 @@ class Fitter:
         model = BallisticModel(result['x'], T0)
         model.inliers = np.array([False]*len(samples))
         model.inliers[indices] = self.inliers_condition(p_error, d_error)
+        if sum(model.inliers) < 2:
+            return None
         camera = samples[np.argmax(model.inliers)].ball.camera if np.any(model.inliers) else None # camera index of first inlier
         model.cameras = np.array([(camera := samples[i].ball.camera if model.inliers[i] else camera) for i in range(len(samples))])
         model.indices = np.arange(np.min(np.where(model.inliers)), np.max(np.where(model.inliers))+1) if np.any(model.inliers) else np.array([])
+        model.start_timestamp = samples[model.indices[0]].ball.timestamp
+        model.end_timestamp = samples[model.indices[-1]].ball.timestamp
         return model
 
 
+@dataclass
 class ModelMark():
+    reason: str = ""
     NO_MODEL = 1
     ACCEPTED = 2
     DISCARDED = 3
@@ -125,14 +131,10 @@ class ModelMarkNoModel(ModelMark):
 class ModelMarkAccepted(ModelMark):
     code = ModelMark.ACCEPTED
 
-@dataclass
 class ModelMarkProposed(ModelMark):
-    reason: str = ""
     code = ModelMark.PROPOSED
 
-@dataclass
 class ModelMarkDiscarded(ModelMark):
-    reason: str
     code = ModelMark.DISCARDED
 
 class ModelMarkSkipped(ModelMark):
@@ -186,6 +188,7 @@ class SlidingWindow:
         if self.display:
             for label in ModelMark:
                 print(f"\x1b[3{label}m{label} -", label, "\x1b[0m")
+        self.conditions = {}
     popped = 0
     def pop(self, count=1, callback=None):
         for i in range(count):
@@ -207,32 +210,29 @@ class SlidingWindow:
             else:
                 self.popped = 0
 
-    def fit(self):
-        model = self.fitter(self.window)
-        if model is None:
+    def fit(self, model=None):
+        new_model = self.fitter(self.window)
+        if new_model is None:
             self.print([False]*len(self.window), ModelMarkNoModel())
             return None
 
-        inliers = model.inliers
+        inliers = new_model.inliers
         if not inliers[0]:
-            model.mark = ModelMarkDiscarded("first sample is not an inlier")
-            self.print(inliers, model.mark)
-            return model
-
-        if sum(inliers) < self.min_inliers:
-            model.mark = ModelMarkDiscarded("not enough inliers")
-            self.print(inliers, model.mark)
-            return model
+            new_model.mark = ModelMarkDiscarded("first sample is not an inlier")
+            self.print(inliers, new_model.mark)
+            self.conditions.setdefault('first sample is not an inlier', [0])[0] += 1
+            return new_model
 
         outliers_ratio = 1 - sum(inliers)/(np.ptp(np.where(inliers)) + 1)
         if outliers_ratio > self.max_outliers_ratio:
-            model.mark = ModelMarkDiscarded("too many outliers")
-            self.print(inliers, model.mark)
-            return model
+            new_model.mark = ModelMarkDiscarded("too many outliers")
+            self.conditions.setdefault('too many outliers', [0])[0] += 1
+            self.print(inliers, new_model.mark)
+            return new_model
 
-        model.mark = ModelMarkProposed()
-        self.print(model.inliers, model.mark, label='(inliers)')
-        return model
+        new_model.mark = ModelMarkProposed()
+        self.print(new_model.inliers, new_model.mark, label='(inliers)')
+        return new_model
 
     """
         Inputs: generator of `Sample`s (containing ball detections or not)
@@ -248,36 +248,41 @@ class SlidingWindow:
 
                 # move window forward until a model is found
                 while (model := self.fit()) is None or not isinstance(model.mark, ModelMarkProposed):
-                    try:
-                        model.start_timestamp = self.window[model.indices[0]].ball.timestamp
-                        model.end_timestamp = self.window[model.indices[-1]].ball.timestamp
-                        callback = lambda i, s: setattr(s.ball, "model", model) if hasattr(s, 'ball') else None
-                    except (AttributeError, IndexError, BaseException):
-                        callback = None
+                    callback = lambda i, s: setattr(s.ball, "model", model) if hasattr(s, 'ball') else None
                     yield from self.pop(1, callback=callback)
                     while self.window.duration < self.min_window_length:
                         self.window.append(next(gen))
 
                 # grow window while model fits data
+                chances = 1
                 while True:
                     self.window.append(next(gen))
                     new_model = self.fit()
                     if new_model is None or not isinstance(new_model.mark, ModelMarkProposed):
-                        model.mark = ModelMarkProposed(new_model.mark.reason if new_model else "stopped due to no model")
-                        break
+                        if (chances := chances-1) < 0:
+                            model.mark = ModelMarkProposed(f"[stop: next is '{new_model.mark.reason if new_model else 'no model'}']")
+                            break
+                        elif new_model and new_model.mark.reason == 'first sample is not an inlier':
+                            self.print(new_model.inliers, ModelMarkSkipped())
+                            callback = lambda i, s: setattr(s.ball, "model", new_model) if hasattr(s, 'ball') else None
+                            yield from self.pop(1, callback=callback)
+                        else:
+                            continue
+
+                    chances = 1 # reset changes
 
                     inliers_increase = (sum(new_model.inliers) - sum(model.inliers))/len(model.inliers)
                     if inliers_increase >= 0:
                         model = new_model
                     elif inliers_increase < -self.max_inliers_decrease:
                         self.print(new_model.inliers, ModelMarkDiscarded('much fewer inliers'))
-                        model.mark = ModelMarkProposed('stopped due to much fewer inliers')
+                        model.mark = ModelMarkProposed('[stop: next provides much less inliers]')
                         break
                     else: # inliers decreased but not too much
                         self.print(new_model.inliers, ModelMarkSkipped())
                         continue # keep previous model and test a new model with additional data
 
-                model.mark = ModelMarkAccepted()
+                model.mark = ModelMarkAccepted(model.mark.reason)
 
                 # discard irrelevenat models
                 timestamps = np.array([self.window[i].ball.timestamp for i in model.indices if hasattr(self.window[i], 'ball')])
@@ -297,8 +302,6 @@ class SlidingWindow:
 
             # pop model data
             if model: # required if `StopIteration` is raised before `model` is assigned
-                model.start_timestamp = self.window[model.indices[0]].ball.timestamp
-                model.end_timestamp = self.window[model.indices[-1]].ball.timestamp
                 callback = lambda i, s: setattr(setdefaultattr(s, 'ball', Ball({
                     'origin': RECOVERED_BALL_ORIGIN,
                     'center': model(s.timestamps[model.cameras[i]]).tolist(),
@@ -326,11 +329,13 @@ class BallStateSlidingWindow(SlidingWindow):
         flyings = [hasattr(s, 'ball') and s.ball.state == BallState.FLYING for s in self.window]
         if sum(flyings) < self.min_flyings:
             self.print(flyings, ModelMarkDiscarded("not enough flying balls"))
+            self.conditions.setdefault('not enough flying balls', [0])[0] += 1
             return None
 
         nonflyings_ratio = 1 - sum(flyings)/(np.ptp(np.where(flyings)) + 1) if np.any(flyings) else 0
         if nonflyings_ratio > self.max_nonflyings_ratio:
             self.print(flyings, ModelMarkDiscarded("too many non-flyings"))
+            self.conditions.setdefault('too many non-flyings', [0])[0] += 1
             return None
 
         model = super().fit()
@@ -570,6 +575,7 @@ class InstantRenderer():
         self.ids = ids
         self.min_duration = min_duration
         self.repeat_factor = repeat_factor
+        self.font_size = .8
 
     def draw_ball(self, pd, image, ball, color=None, label=None):
         color = color or pd.color
@@ -577,12 +583,12 @@ class InstantRenderer():
         pd.draw_line(image, ball.center,               ground3D,                  lineType=cv2.LINE_AA, color=color)
         pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), lineType=cv2.LINE_AA, thickness=1, color=color)
         pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), lineType=cv2.LINE_AA, thickness=1, color=color)
-        center = pd.calib.project_3D_to_2D(ball.center).to_int_tuple()
         radius = pd.calib.compute_length2D(ball.center, BALL_DIAMETER/2)
+        x, y = pd.calib.project_3D_to_2D(ball.center).to_int_tuple()
 
-        cv2.circle(image, center, int(radius), color, 1)
+        cv2.circle(image, (x, y), int(radius), color, 1)
         if label is not None:
-            cv2.putText(image, label, center, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+            cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, color, 2, lineType=cv2.LINE_AA)
 
     def __call__(self, sample):
         instant = self.ids.query_item(sample.key)
@@ -602,10 +608,11 @@ class InstantRenderer():
                     stop  = Point3D(np.vstack([points3D[:, -1], ground3D[:, -1]]).T)
                     for line in [points3D, ground3D, start, stop]:
                         pd.polylines(image, line, lineType=cv2.LINE_AA)
-                    if not isinstance(model.mark, ModelMarkAccepted):
-                        point3D = Point3D(points3D[:, 0])
-                        x, y = calib.project_3D_to_2D(point3D).to_int_tuple()
-                        cv2.putText(image, getattr(model.mark, "reason", "Other"), (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (250, 20, 30), lineType=cv2.LINE_AA)
+
+                    # Write model mark
+                    point3D = Point3D(points3D[:, 0])
+                    x, y = calib.project_3D_to_2D(point3D).to_int_tuple()
+                    cv2.putText(image, getattr(model.mark, "reason", "Other"), (x, y-30), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, (250, 20, 30), 2, lineType=cv2.LINE_AA)
                 else:
                     color = (255, 0, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255)
                     self.draw_ball(pd, image, ball, color=color, label=str(ball.state))
@@ -616,7 +623,7 @@ class InstantRenderer():
                 if ball.center.z < -0.01: # z pointing down
                     color = (0, 255, 20)
                     self.draw_ball(pd, image, ball, color=color)
-            cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 20), lineType=cv2.LINE_AA)
+            cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, (0, 255, 20), 2, lineType=cv2.LINE_AA)
 
         return np.hstack(instant.images)
 
@@ -628,67 +635,6 @@ class TrajectoryRenderer(InstantRenderer):
         for key, sample in samples.items():
             instant = self.ids.query_item(key)
             yield from super().__call__(instant, sample)
-
-
-
-    # model = None
-    # canvas = []
-    # def __init__(self, f=25, thickness=2, display=False):
-    #     self.thickness = thickness
-    #     self.f = f
-    #     self.display = display
-    # def __call__(self, images, calibs: Iterable[Calib], sample=None, color=(0, 120, 255)):
-    #     new_model = False
-
-    #     # If new model starts or existing model has ended
-    #     if hasattr(sample, 'ball') and (model := getattr(sample.ball, 'model', None)) != self.model:
-    #         self.model = model
-    #         new_model = model is not None
-    #         if model is None:
-    #             if self.display: # display model that just ended
-    #                 pass # TODO
-    #                 # w = self.canvas.shape[1]
-    #                 # h = int(w/16*9)
-    #                 # offset = 320
-    #                 # plt.imshow(self.canvas[offset:offset+h, 0:w])
-    #                 # plt.show()
-    #             self.canvas = []
-
-    #     # Draw model
-    #     if self.model and self.model.T0 <= timestamp <= self.model.TN:
-    #         num  = int((self.model.TN - self.model.T0)*self.f/1000)
-    #         points3D = self.model(np.linspace(self.model.T0, self.model.TN, num))
-    #         ground3D = Point3D(points3D)
-    #         ground3D.z = 0
-    #         start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
-    #         stop  = Point3D(np.vstack([points3D[:, -1], ground3D[:, -1]]).T)
-    #         for image, calib in zip(images, calibs):
-    #             pd = ProjectiveDrawer(calib, (255,255,0), thickness=self.thickness, segments=1)
-    #             pd.polylines(image, points3D, lineType=cv2.LINE_AA)
-    #             pd.polylines(image, ground3D, lineType=cv2.LINE_AA)
-    #             pd.polylines(image, start, lineType=cv2.LINE_AA)
-    #             pd.polylines(image, stop, lineType=cv2.LINE_AA)
-
-    #     # Draw detected position
-    #     if hasattr(sample, 'ball'):
-    #         ground3D = Point3D(sample.ball.center.x, sample.ball.center.y, 0)
-    #         if new_model: # use current image as canvas
-    #             self.canvas = copy.deepcopy(images)
-    #         for image_list in [images, self.canvas]:
-    #             for image, calib in zip(image_list, calibs):
-    #                 if hasattr(sample, "ball"):
-    #                     ball = sample.ball
-    #                     color = (0, 120, 255) if hasattr(ball, "model") and ball.model is not None else (200, 40, 100)
-    #                     pd = ProjectiveDrawer(calib, color, thickness=self.thickness, segments=1)
-    #                     pd.polylines(image, Point3D([ball.center, ground3D]), lineType=cv2.LINE_AA)
-    #                     pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), lineType=cv2.LINE_AA, thickness=self.thickness)
-    #                     pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), lineType=cv2.LINE_AA, thickness=self.thickness)
-    #                     center = calib.project_3D_to_2D(ball.center).to_int_tuple()
-    #                     radius = calib.compute_length2D(ball.center, BALL_DIAMETER/2)
-    #                     cv2.circle(image, center, int(radius), color, 1)
-    #                     cv2.putText(image, str(ball.state), center, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-    #                 cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 30), self.thickness, lineType=cv2.LINE_AA)
-
 
 
 class SelectBall:
@@ -704,3 +650,12 @@ class SelectBall:
         return item
 
 
+
+class CropBlockDividable():
+    def __init__(self, block_size=16):
+        self.block_size = block_size
+    def __call__(self, image):
+        height, width, _ = image.shape
+        w = width//self.block_size*self.block_size
+        h = height//self.block_size*self.block_size
+        return image[:h,0:w]
