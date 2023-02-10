@@ -75,6 +75,10 @@ class Fitter:
         p_data = project_3D_to_2D(P, points3D)
         d_data = compute_length2D(K, RT, points3D, BALL_DIAMETER, points2D=p_data)
 
+        # from matplotlib import pyplot as plt
+        # ax = plt.figure().gca()
+        # ax.plot(p_data.x, p_data.y, '.')
+
         p_error, d_error = None, None
         def error(initial_condition):
             nonlocal p_error, d_error
@@ -97,15 +101,27 @@ class Fitter:
         try:
             initial_guess = (np.linalg.inv(A.T@A)@A.T@b).flatten()
         except np.linalg.LinAlgError:
+            #plt.show()
             return None
+
+        # p_data = project_3D_to_2D(P, BallisticModel(initial_guess, T0)(timestamps))
+        # ax.plot(p_data.x, p_data.y, color='green')
 
         result = getattr(scipy.optimize, self.optimizer)(error, initial_guess, **self.optimizer_kwargs)
         if not result.success:
+            #plt.show()
+            #print("no success")
             return None
         model = BallisticModel(result['x'], T0)
+
+        # p_data = project_3D_to_2D(P, model(timestamps))
+        # ax.plot(p_data.x, p_data.y, color='blue')
+        # plt.show()
+
         model.inliers = np.array([False]*len(samples))
         model.inliers[indices] = self.inliers_condition(p_error, d_error)
         if sum(model.inliers) < 2:
+            # print(p_error, self.inliers_condition(p_error, d_error))
             return None
         camera = samples[np.argmax(model.inliers)].ball.camera if np.any(model.inliers) else None # camera index of first inlier
         model.cameras = np.array([(camera := samples[i].ball.camera if model.inliers[i] else camera) for i in range(len(samples))])
@@ -186,8 +202,8 @@ class SlidingWindow:
         self.min_distance_px = min_distance_px
         self.display = display
         if self.display:
-            for label in ModelMark:
-                print(f"\x1b[3{label}m{label} -", label, "\x1b[0m")
+            for i in range(1, 7):
+                print(f"\x1b[3{i}m{i} -", i, "\x1b[0m")
         self.conditions = {}
     popped = 0
     def pop(self, count=1, callback=None):
@@ -213,7 +229,7 @@ class SlidingWindow:
     def fit(self, model=None):
         new_model = self.fitter(self.window)
         if new_model is None:
-            self.print([False]*len(self.window), ModelMarkNoModel())
+            self.print([False]*len(self.window), ModelMarkNoModel('no model from fitter'))
             return None
 
         inliers = new_model.inliers
@@ -256,7 +272,9 @@ class SlidingWindow:
                 # grow window while model fits data
                 chances = 1
                 while True:
-                    self.window.append(next(gen))
+                    while not hasattr(sample := next(gen), 'ball'):
+                        self.window.append(sample)
+                    self.window.append(sample)
                     new_model = self.fit()
                     if new_model is None or not isinstance(new_model.mark, ModelMarkProposed):
                         if (chances := chances-1) < 0:
@@ -266,6 +284,10 @@ class SlidingWindow:
                             self.print(new_model.inliers, ModelMarkSkipped())
                             callback = lambda i, s: setattr(s.ball, "model", new_model) if hasattr(s, 'ball') else None
                             yield from self.pop(1, callback=callback)
+                            model.indices = model.indices - 1
+                            model.cameras = model.cameras[1:]
+                            model.inliers = model.inliers[1:]
+                            continue
                         else:
                             continue
 
@@ -344,8 +366,9 @@ class BallStateSlidingWindow(SlidingWindow):
         return model
 
 
-def model(*, min_window_length, min_inliers, max_outliers_ratio,
+def model(*, min_window_length, max_outliers_ratio,
     d_error_weight, p_error_threshold, scale,
+    min_inliers=0,
     min_flyings=0, max_nonflyings_ratio=0,
     max_inliers_decrease=.1, min_distance_cm=50, min_distance_px=50,
     **kwargs):
