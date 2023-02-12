@@ -369,7 +369,7 @@ class BallStateSlidingWindow(SlidingWindow):
 def model(*, min_window_length, max_outliers_ratio,
     d_error_weight, p_error_threshold, scale,
     min_inliers=0,
-    min_flyings=0, max_nonflyings_ratio=0,
+    min_flyings=0, max_nonflyings_ratio=1.0,
     max_inliers_decrease=.1, min_distance_cm=50, min_distance_px=50,
     **kwargs):
 
