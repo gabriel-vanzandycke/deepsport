@@ -361,7 +361,7 @@ class BallStateSlidingWindow(SlidingWindow):
             return None
 
         model = super().fit()
-        if model is not None and isinstance(model.mark, ModelMarkProposed) and (self.min_flyings or self.max_nonflyings_ratio):
+        if model is not None and isinstance(model.mark, ModelMarkProposed) and (self.min_flyings != 0 or self.max_nonflyings_ratio != 1.0):
             self.print(flyings, model.mark, label='(flyings)')
         return model
 
