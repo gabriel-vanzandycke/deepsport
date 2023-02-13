@@ -287,6 +287,7 @@ class SlidingWindow:
                             model.indices = model.indices - 1
                             model.cameras = model.cameras[1:]
                             model.inliers = model.inliers[1:]
+                            model.start_timestamp = self.window[model.indices[0]].ball.timestamp
                             continue
                         else:
                             continue
@@ -434,6 +435,20 @@ class MatchTrajectories:
         self.overlap = []
         self.union = []
         self.intersection = []
+        self.s_TP = 0
+        self.s_FP = 0
+        self.s_FN = 0
+
+
+    def compute_samples_TP_FP_FN(self, a, p):
+        samples = {sample.key: sample for sample in p.samples} if p else {}
+
+        annotated_trajectory_samples = set([sample.key for sample in a.samples]) if a else set([])
+        predicted_trajectory_samples = set([sample.key for sample in p.samples]) if p else set([])
+        self.s_TP += len(annotated_trajectory_samples.intersection(predicted_trajectory_samples))
+        self.s_FN += len(annotated_trajectory_samples.difference(predicted_trajectory_samples))
+        s_FP = predicted_trajectory_samples.difference(annotated_trajectory_samples)
+        self.s_FP += len([k for k in s_FP if samples[k].ball_state != BallState.NONE])
 
     def TP_callback(self, a, p):
         self.TP.append((a.trajectory_id, p.trajectory_id))
@@ -443,6 +458,7 @@ class MatchTrajectories:
         self.overlap.append(a - p)
         self.intersection.append(a - p)
         self.union.append(a + p)
+        self.compute_samples_TP_FP_FN(a, p)
 
         # compute MAPE, MARE, MADE if ball 3D position was annotated
         if any([s.ball_annotations and np.abs(s.ball_annotations[0].center.z) > 0.1 for s in a.samples]):
@@ -464,6 +480,7 @@ class MatchTrajectories:
         else:
             self.union.append(len(a))
         self.splitted_annotated_trajectories += (1 if p is not None else 0)
+        self.compute_samples_TP_FP_FN(a, p)
         if len(a) < self.min_duration:
             return
         self.FN.append(a.trajectory_id)
@@ -476,6 +493,7 @@ class MatchTrajectories:
         else:
             self.union.append(len(p))
         self.splitted_predicted_trajectories += (1 if a is not None else 0)
+        self.compute_samples_TP_FP_FN(a, p)
         if len(p) < self.min_duration:
             return
         self.FP.append(p.trajectory_id)
@@ -590,6 +608,11 @@ class MatchTrajectories:
             'ballistic_MAPE': mean(self.ballistic_MAPE),
             'detections_MAPE': mean(self.detections_MAPE),
             'IoU': sum(self.intersection)/sum(self.union),
+            's_TP': self.s_TP,
+            's_FP': self.s_FP,
+            's_FN': self.s_FN,
+            's_precision': self.s_TP / (self.s_TP + self.s_FP) if self.s_TP + self.s_FP > 0 else 0,
+            's_recall': self.s_TP / (self.s_TP + self.s_FN) if self.s_TP + self.s_FN > 0 else 0,
         }
 
 
