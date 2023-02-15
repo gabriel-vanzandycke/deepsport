@@ -2,10 +2,9 @@ import argparse
 import os
 
 import dotenv
+import numpy as np
 import optuna
-from optuna.integration.wandb import WeightsAndBiasesCallback
 from tqdm.auto import tqdm
-import wandb
 
 from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
@@ -15,16 +14,16 @@ from tasks.ballistic import model, MatchTrajectories, SelectBall
 dotenv.load_dotenv()
 
 parameters = {
-    "min_inliers":             ("suggest_int",   {'low':  0, 'high':   8, 'step':  1}),
-    "max_outliers_ratio":      ("suggest_float", {'low': .1, 'high':  .9, 'step':.01}),
+    "min_inliers":          ('fixed', 2),#   ("suggest_int",   {'low':  0, 'high':   8, 'step':  1}),
+    "max_outliers_ratio":      ("suggest_float", {'low': .1, 'high':  .9, 'step': .1}),
     "min_flyings":             ("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
-    "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':  .9, 'step': .1}),
+    "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':   1, 'step': .1}),
     "max_inliers_decrease": ('fixed', .1),#("suggest_float", {'low':  0, 'high':  .2, 'step':.05}),
     "scale":                   ("suggest_float", {'low': -1, 'high':   2, 'step': .5}),
     "p_error_threshold":       ("suggest_int",   {'low':  1, 'high':  10, 'step':  1}),
     "d_error_weight":          ("suggest_int",   {'low':  0, 'high': 100, 'step': 10}),
-    "min_distance_cm":         ("suggest_int",   {'low': 50, 'high': 500, 'step': 50}),
-    "min_distance_px":         ("suggest_int",   {'low': 50, 'high': 500, 'step': 50}),
+    "min_distance_cm":         ("suggest_int",   {'low': 50, 'high': 200, 'step': 50}),
+    "min_distance_px":         ("suggest_int",   {'low': 50, 'high': 200, 'step': 50}),
     "min_window_length":       ("suggest_int",   {'low':160, 'high': 350, 'step': 10}),
 }
 
@@ -47,8 +46,10 @@ if __name__ == '__main__':
         fixed_kwargs.update(max_nonflyings_ratio=0)
 
     objectives = {
-        'IoU': 'maximize',
-        'ballistic_MAPE': 'minimize'
+        #'IoU': 'maximize',
+        #'ballistic_MAPE': 'minimize'
+        's_precision': 'maximize',
+        's_recall': 'maximize',
         #'overlap': 'maximize',
         #'splitted_predicted_trajectories': 'minimize',
         #'FP': 'minimize'
@@ -84,7 +85,10 @@ if __name__ == '__main__':
         for key, value in kwargs.items():
             trial.set_user_attr(key, value)
 
-        return tuple(compare.metrics[name] for name in objectives)
+        values = tuple(compare.metrics[name] for name in objectives)
+        if np.any(np.isnan(values)):
+            raise optuna.TrialPruned()
+        return values
 
 
     # RDBStorage with sqlite doesn't handle concurrency on NFS storage
