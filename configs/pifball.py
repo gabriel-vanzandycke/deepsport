@@ -2,7 +2,7 @@ import tensorflow as tf
 import mlworkflow as mlwf
 import experimentator
 import experimentator.wandb_experiment
-from experimentator.utils import find
+from experimentator import find
 import experimentator.tf2_experiment
 import experimentator.tf2_chunk_processors
 

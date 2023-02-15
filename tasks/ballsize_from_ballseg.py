@@ -9,8 +9,7 @@ import skimage.transform
 import tensorflow as tf
 
 from calib3d import Calib, Point3D, Point2D
-from experimentator import Callback, ExperimentMode, build_experiment
-from experimentator.utils import find
+from experimentator import find, Callback, ExperimentMode, build_experiment
 from experimentator.tf2_chunk_processors import ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 

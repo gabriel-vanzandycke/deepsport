@@ -1,8 +1,7 @@
 import tensorflow as tf
 import mlworkflow as mlwf
 import experimentator
-from experimentator.utils import find
-from experimentator import Subset, SubsetType
+from experimentator import find, Subset, SubsetType
 import experimentator.tf2_experiment
 import experimentator.wandb_experiment
 import deepsport_utilities.ds.instants_dataset
@@ -29,14 +28,14 @@ side_length = 114
 output_shape = (side_length, side_length)
 
 # DeepSport Dataset
-dataset_name = "ball_states_dataset.pickle"
+dataset_name = "ballstate_dataset.pickle"
 scale_min = 0.75
 scale_max = 1.25
 max_shift = 0
 
 globals().update(locals()) # required for lambda definition
 transforms = lambda scale: [
-    tasks.ballstate.BallCropperTransform(
+    deepsport_utilities.ds.instants_dataset.BallCropperTransform(
         output_shape=output_shape,
         scale_min=scale_min*scale,
         scale_max=scale_max*scale,
@@ -52,7 +51,7 @@ transforms = lambda scale: [
 dataset_splitter = "arenas_specific"
 dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms(1)))
 subsets = {
-    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-STCHAMOND", "KS-FR-NANTES", "KS-FR-NANCY", "KS-FR-EVREUX"]),
+    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-EVREUX"]),
     "random_shuffle": experimentator.BasicDatasetSplitter()
 }[dataset_splitter](dataset)
 
@@ -78,8 +77,6 @@ callbacks = [
     experimentator.LearningRateWarmUp(),
     tasks.ballstate.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
 ]
-
-
 
 projector = "conv2d"
 projector_network = {

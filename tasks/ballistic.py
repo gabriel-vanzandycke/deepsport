@@ -418,6 +418,7 @@ def compute_projection_error(true: Point3D, pred: Point3D):
 
 class MatchTrajectories:
     def __init__(self, min_duration=250, callback=None):
+        raise NotImplementedError("# compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
         self.TP = []
         self.FP = []
         self.FN = []

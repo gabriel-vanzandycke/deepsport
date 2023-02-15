@@ -8,12 +8,12 @@ import tensorflow as tf
 from matplotlib import cm
 
 from calib3d import Point2D
-from experimentator import build_experiment, Callback, ExperimentMode, ChunkProcessor
+from experimentator import build_experiment, Callback, ExperimentMode, ChunkProcessor, Subset
 from experimentator.tf2_experiment import TensorflowExperiment
-from experimentator.dataset import Subset, collate_fn
 from deepsport_utilities.ds.instants_dataset import Ball
 from deepsport_utilities.ds.instants_dataset.views_transforms import NaiveViewRandomCropperTransform
 from deepsport_utilities.transforms import Transform
+from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.utils import DefaultDict
 from dataset_utilities.ds.raw_sequences_dataset import BallState
 
@@ -46,7 +46,7 @@ class BallStateClassification(TensorflowExperiment):
             get_class = lambda k,v: v['ball_state']
             keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
             # yields pairs of (keys, data)
-            yield from subset.dataset.batches(keys=keys, batch_size=batch_size, collate_fn=collate_fn, *args, **kwargs)
+            yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
 
 class BallDetection(NamedTuple):
     model: str
@@ -144,17 +144,31 @@ class AddBallDetectionsTransform(Transform):
         return instant
 
 
-class BallCropperTransform(NaiveViewRandomCropperTransform):
-    def _get_current_parameters(self, view_key, view):
-        input_shape = view.calib.width, view.calib.height
-        keypoints = view.calib.project_3D_to_2D(view.ball.center)
-        return keypoints, 1, input_shape
+class AddBallSizeFactory(Transform):
+    def __call__(self, view_key, view):
+        ball = view.ball
+        predicate = lambda ball: ball.origin in ['annotation', 'interpolation']
+        return {"ball_size": view.calib.compute_length2D(ball, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
 
 class AddBallStateFactory(Transform):
     def __call__(self, view_key, view):
-        predicate = lambda a: a.camera == view_key.camera and a.type == "ball" and view.calib.projects_in(a.center) and a.visible is not False
-        balls = [a for a in view.annotations if predicate(a)]
-        return {"ball_state": balls[0].state if balls and balls[0].state is not None else BallState.NONE} # takes the first ball by convention
+        return {"ball_state": view.ball.state or BallState.NONE}
+
+class AddIsBallTargetFactory(Transform):
+    def __init__(self, unconfident_margin=.2):
+        self.unconfident_margin = unconfident_margin
+    def __call__(self, view_key, view):
+        ball = view.ball
+        if ball.origin in ['annotation', 'interpolation']:
+            return {"is_ball": 1}
+        elif 'pseudo-annotation' in ball.origin:
+            return {"is_ball": 1 - self.unconfident_margin}
+        elif 'random' in ball.origin:
+            return {"is_ball": 0}
+        else:
+            return {'is_ball': 0 + self.unconfident_margin}
+
+
 
 @dataclass
 class ExtractClassificationMetrics(Callback):
@@ -192,3 +206,25 @@ class ChannelsReductionLayer(ChunkProcessor):
     def __call__(self, chunk):
         chunk['batch_input'] = self.layers(chunk['batch_input'])
 
+
+
+class NamedOutputs(ChunkProcessor):
+    def __call__(self, chunk):
+        chunk["predicted_diameter"] = chunk["batch_logits"][...,0]
+        chunk["predicted_is_ball"] = chunk["batch_logits"][...,1]
+        chunk["predicted_state"] = chunk["batch_logits"][...,2:]
+
+class StateClassificationLoss(ChunkProcessor):
+    def __init__(self, classes):
+        self.classes = classes
+    def __call__(self, chunk):
+        batch_target = tf.one_hot(chunk['batch_ball_state'], len(self.classes))
+        loss = tf.keras.losses.binary_crossentropy(batch_target, chunk["predicted_state"], from_logits=True)
+        chunk["state_loss"] = tf.reduce_mean(loss)
+
+class CombineLosses(ChunkProcessor):
+    def __init__(self, names, weights):
+        self.weights = weights
+        self.names = names
+    def __call__(self, chunk):
+        chunk["loss"] = tf.reduce_sum([chunk[name]*w for name, w in zip(self.names, self.weights)])

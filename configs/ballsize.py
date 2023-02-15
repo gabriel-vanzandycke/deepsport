@@ -1,7 +1,7 @@
 import tensorflow as tf
 import mlworkflow as mlwf
 import experimentator
-from experimentator.utils import find
+from experimentator import find
 import experimentator.tf2_experiment
 import deepsport_utilities.ds.instants_dataset
 import tasks.ballsize
@@ -27,7 +27,7 @@ size_min = 14
 size_max = 45
 max_shift = 0
 transforms = [
-    tasks.ballsize.BallRandomCropperTransform(
+    deepsport_utilities.ds.instants_dataset.BallCropperTransform(
         output_shape=output_shape,
         size_min=size_min,
         size_max=size_max,
@@ -41,9 +41,12 @@ transforms = [
     )
 ]
 
-dataset_splitter = deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
+dataset_splitter = "arenas_specific"
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
-subsets = dataset_splitter(dataset)
+subsets = {
+    "deepsport": deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip"),
+    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-ROANNE", "KS-FR-LILLE"]),
+}[dataset_splitter](dataset)
 
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
