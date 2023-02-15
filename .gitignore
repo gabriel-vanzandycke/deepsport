@@ -11,3 +11,4 @@ wandb
 *.pickle
 .vscode
 *.mp4
+*.db
