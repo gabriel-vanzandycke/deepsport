@@ -10,7 +10,7 @@ from deepsport_utilities import import_dataset
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, ViewsDataset, BuildBallViews, AddBallAnnotation, DownloadFlags
 from dataset_utilities.ds.raw_sequences_dataset import BallState
 from mlworkflow import TransformedDataset, PickledDataset
-from experimentator.utils import find
+from experimentator import find
 
 load_dotenv()
 
