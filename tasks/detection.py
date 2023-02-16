@@ -1,14 +1,20 @@
 from dataclasses import dataclass
 from functools import cached_property
+import os
+import pickle
 import typing
 
 import numpy as np
 import pandas
 import tensorflow as tf
 
+from calib3d import Point2D, Point3D
 from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics
 
-from experimentator import Callback, ChunkProcessor, ExperimentMode
+from deepsport_utilities.transforms import Transform
+from deepsport_utilities.utils import DelayedCallback
+from deepsport_utilities.ds.instants_dataset import Ball, BallState
+from experimentator import Callback, ChunkProcessor, ExperimentMode, build_experiment
 from experimentator.tf2_experiment import TensorflowExperiment
 
 
@@ -184,7 +190,7 @@ class ComputeTopK(ChunkProcessor):
             Outputs:
                 topk_outputs - a (B,C,N,K) tensor where values along the K dimensions are sorted by
                                peak intensity.
-                topk_indices - a (B,C,N,K,S) tensor where x coordinates are located in S=0 and y
+                topk_indices - a (B,C,N,K,S) tensor where y coordinates are located in S=0 and x
                                coordinates are located in S=1.
         """
         self.k = np.max(k)
@@ -218,3 +224,107 @@ class EnlargeTarget(ChunkProcessor):
         self.pool_size = pool_size
     def __call__(self, chunk):
         chunk["batch_target"] = tf.nn.max_pool2d(chunk["batch_target"][..., tf.newaxis], self.pool_size, strides=1, padding='SAME')
+
+
+BALL_DETECTIONS_DATABASE_PATH = "{}/{}/balls3d.pickle"
+PIFBALL_THRESHOLD = 0.05
+BALLSEG_THRESHOLD = 0.6
+
+
+class DetectBalls():
+    def __init__(self, dataset_folder, name, config, k, detection_threshold):
+        self.database_path = os.path.join(dataset_folder, BALL_DETECTIONS_DATABASE_PATH)
+        self.detection_threshold = detection_threshold
+        self.name = name
+        self.database = {}
+        self.model = build_experiment(config, k=k)
+
+    def detect(self, instant):
+        cameras = range(instant.num_cameras)
+        offset = instant.offsets[1]
+        data = {
+            "batch_input_image": np.stack(instant.images),
+            "batch_input_image2": np.stack([instant.all_images[(c, offset)] for c in cameras])
+        }
+
+        result = self.model.predict(data)
+        B, _, _, K = result['topk_outputs'].shape
+        for camera_idx in range(B):
+            for i in range(K):
+                y, x = np.array(result['topk_indices'][camera_idx, 0, 0, i])
+                value = result['topk_outputs'][camera_idx, 0, 0, i].numpy()
+                if value > self.detection_threshold:
+                    ball = Ball({
+                        "origin": self.name,
+                        "center": instant.calibs[camera_idx].project_2D_to_3D(Point2D(x, y), Z=0),
+                        "image": camera_idx,
+                        "visible": True, # visible enough to have been detected by a detector
+                        "value": value,
+                        "state": getattr(instant, "ball_state", BallState.NONE),
+                    })
+                    ball.point = Point2D(x, y) # required to extract pseudo-annotations
+                    yield ball
+
+    def __call__(self, instant_key, instant):
+        key = (instant_key.arena_label, instant_key.game_id)
+
+        # Load existing database
+        if os.path.isfile(self.database_path.format(*key)):
+            database = pickle.load(open(self.database_path.format(*key), 'rb'))
+        else:
+            database = {}
+        detections = database.setdefault(instant_key.timestamp, [])
+        detections.extend(self.detect(instant))
+
+        # Save updated database
+        pickle.dump(database, open(self.database_path.format(*key), 'wb'))
+
+        return instant
+
+
+class ImportDetectionsTransform(Transform):
+    def __init__(self, dataset_folder, proximity_threshold):
+        self.dataset_folder = dataset_folder
+        self.database_path = os.path.join(dataset_folder, BALL_DETECTIONS_DATABASE_PATH)
+        self.proximity_threshold = proximity_threshold # pixels
+
+    def extract_pseudo_annotation(self, instant):
+        detections = instant.detections
+        camera = np.array([d.camera_idx for d in detections])
+        models = np.array([d.model for d in detections])
+        points = Point2D([d.point for d in detections])
+        values = np.array([d.value for d in detections])
+
+        camera_cond      = camera[np.newaxis, :] == camera[:, np.newaxis]
+        corroborate_cond = models[np.newaxis, :] != models[:, np.newaxis]
+        proximity_cond   = np.linalg.norm(points[:, np.newaxis, :] - points[:, :, np.newaxis], axis=0) < self.proximity_threshold
+
+        values_matrix = values[np.newaxis, :] + values[:, np.newaxis]
+        values_matrix_filtered = np.triu(camera_cond * corroborate_cond * proximity_cond * values_matrix)
+        i1, i2 = np.unravel_index(values_matrix_filtered.argmax(), values_matrix_filtered.shape)
+        if i1 != i2: # means two different candidate were found
+            center = Point3D(np.mean([detections[i1].center, detections[i2].center], axis=0))
+            return Ball({
+                "origin": "pseudo-annotation",
+                "center": center,
+                "image": detections[i1].camera_idx,
+                "visible": True, # visible enough to have been detected by a detector
+                "value": values_matrix[i1, i2],
+                "state": getattr(instant, "ball_state", BallState.NONE),
+            })
+        return None
+
+    def __call__(self, instant_key, instant):
+        key = (instant_key.arena_label, instant_key.game_id)
+        if key not in self.database:
+            self.database[key] = pickle.load(open(self.database_path.format(*key), "rb"))
+        detections = self.database[key].get(instant_key.timestamp, [])
+        instant.detections.extend(detections)
+
+        balls = [a for a in instant.annotations if isinstance(a, Ball)]
+        if not balls:
+            pseudo_annotation = self.extract_pseudo_annotation(instant)
+            if pseudo_annotation is not None:
+                instant.annotations.extend([pseudo_annotation])
+                instant.ball = pseudo_annotation
+        return instant
