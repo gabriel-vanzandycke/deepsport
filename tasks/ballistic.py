@@ -9,6 +9,7 @@ import scipy.optimize
 from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.utils import setdefaultattr
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, Ball
+from deepsport_utilities.dataset import Subset
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
 
@@ -75,10 +76,6 @@ class Fitter:
         p_data = project_3D_to_2D(P, points3D)
         d_data = compute_length2D(K, RT, points3D, BALL_DIAMETER, points2D=p_data)
 
-        # from matplotlib import pyplot as plt
-        # ax = plt.figure().gca()
-        # ax.plot(p_data.x, p_data.y, '.')
-
         p_error, d_error = None, None
         def error(initial_condition):
             nonlocal p_error, d_error
@@ -101,27 +98,16 @@ class Fitter:
         try:
             initial_guess = (np.linalg.inv(A.T@A)@A.T@b).flatten()
         except np.linalg.LinAlgError:
-            #plt.show()
             return None
-
-        # p_data = project_3D_to_2D(P, BallisticModel(initial_guess, T0)(timestamps))
-        # ax.plot(p_data.x, p_data.y, color='green')
 
         result = getattr(scipy.optimize, self.optimizer)(error, initial_guess, **self.optimizer_kwargs)
         if not result.success:
-            #plt.show()
-            #print("no success")
             return None
         model = BallisticModel(result['x'], T0)
-
-        # p_data = project_3D_to_2D(P, model(timestamps))
-        # ax.plot(p_data.x, p_data.y, color='blue')
-        # plt.show()
 
         model.inliers = np.array([False]*len(samples))
         model.inliers[indices] = self.inliers_condition(p_error, d_error)
         if sum(model.inliers) < 2:
-            # print(p_error, self.inliers_condition(p_error, d_error))
             return None
         camera = samples[np.argmax(model.inliers)].ball.camera if np.any(model.inliers) else None # camera index of first inlier
         model.cameras = np.array([(camera := samples[i].ball.camera if model.inliers[i] else camera) for i in range(len(samples))])
@@ -697,12 +683,32 @@ class SelectBall:
         return item
 
 
+class BallStateAndBallSizeExperiment():
+    batch_inputs_names = ["batch_input_image", "batch_input_image2",
+                          "batch_is_ball", "batch_ball_size", "batch_ball_state"]
+    batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "predicted_state",
+                           "regression_loss", "classification_loss", "state_loss"]
+    batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state"]
 
-class CropBlockDividable():
-    def __init__(self, block_size=16):
-        self.block_size = block_size
-    def __call__(self, image):
-        height, width, _ = image.shape
-        w = width//self.block_size*self.block_size
-        h = height//self.block_size*self.block_size
-        return image[:h,0:w]
+    @staticmethod
+    def balanced_keys_generator(keys, get_class, classes, cache, query_item):
+        pending = {c: [] for c in classes}
+        for key in keys:
+            c = cache.get(key) or cache.setdefault(key, get_class(key, query_item(key)))
+            pending[c].append(key)
+            if all([len(l) > 0 for l in pending.values()]):
+                for c in classes:
+                    yield pending[c].pop(0)
+
+    class_cache = {}
+    def auiebatch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
+        raise NotImplementedError("adapt for size and is ball")
+        if subset.name == "ballistic":
+            yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
+        else:
+            batch_size = batch_size or self.batch_size
+            classes = [BallState.FLYING, BallState.CONSTRAINT, BallState.DRIBBLING]
+            get_class = lambda k,v: v['ball_state']
+            keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
+            # yields pairs of (keys, data)
+            yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
