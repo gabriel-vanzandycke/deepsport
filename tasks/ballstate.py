@@ -48,107 +48,11 @@ class BallStateClassification(TensorflowExperiment):
             # yields pairs of (keys, data)
             yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
 
-class BallDetection(NamedTuple):
-    model: str
-    camera_idx: int
-    point: Point2D
-    value: float
-
-class Detector():
-    def __init__(self, model, config, k=[1]):
-        self.exp = build_experiment(config, k=k)
-        self.k = np.max(k)
-        self.model = model
-        if model == 'ballseg':
-            self.exp.chunk_processors.insert(0, CropBlockDividable(tensor_names=['batch_input_image', 'batch_input_image2']))
-            self.exp.chunk_processors[-2] = EnlargeTarget
-
-    def __call__(self, instant):
-        offset = instant.offsets[1]
-        data = {
-            "batch_input_image": np.stack(instant.images),
-            "batch_input_image2": np.stack([instant.all_images[(c, offset)] for c in range(instant.num_cameras)])
-        }
-
-        result = self.exp.predict(data)
-        for b in range(len(result['topk_outputs'])):
-            for i in range(self.k):
-                y, x = np.array(result['topk_indices'][b,0,0,i]) # TODO: check if this passes
-                value = result['topk_outputs'][b,0,0,i].numpy()
-                yield BallDetection(self.model, b, Point2D(x, y), value)
-
-PIFBALL_THRESHOLD = 0.05
-BALLSEG_THRESHOLD = 0.6
-
-
-class AddBallDetectionsTransform(Transform):
-    def __init__(self, dataset_folder, xy_inverted=False):
-        self.dataset_folder = dataset_folder
-        self.database_path = os.path.join(dataset_folder, "{}/{}/balls3d_new.pickle") # file created by `process_raw_sequences.py` script
-        def factory(args):
-            arena_label, game_id = args
-            filename = self.database_path.format(arena_label, game_id)
-            try:
-                return pickle.load(open(filename, "rb"))
-            except FileNotFoundError:
-                return {}
-        self.database = DefaultDict(factory)
-        self.detection_thresholds = {
-            "pifball": 0.1,
-            "ballseg": 0.8
-        }
-        self.max_distance = 28 # pixels
-        self.xy_inverted = xy_inverted
-
-    def extract_pseudo_annotation(self, detections):
-        camera    = np.array([d.camera_idx for d in detections])
-        models    = np.array([d.model for d in detections])
-        points    = Point2D([d.point for d in detections])
-        values    = np.array([d.value for d in detections])
-        threshold = np.array([d.value > self.detection_thresholds[d.model] for d in detections])
-
-        camera_cond      = camera[np.newaxis, :] == camera[:, np.newaxis]
-        corroborate_cond = models[np.newaxis, :] != models[:, np.newaxis]
-        proximity_cond   = np.linalg.norm(points[:, np.newaxis, :] - points[:, :, np.newaxis], axis=0) < self.max_distance
-        threshold_cond   = threshold[:, np.newaxis] @ threshold[np.newaxis, :]
-
-        values_matrix = values[np.newaxis, :] + values[:, np.newaxis]
-        values_matrix_filtered = np.triu(camera_cond * corroborate_cond * proximity_cond * threshold_cond * values_matrix)
-        i1, i2 = np.unravel_index(values_matrix_filtered.argmax(), values_matrix_filtered.shape)
-        if i1 != i2: # means two different candidate were found
-            point2D = Point2D(np.mean([detections[i1].point, detections[i2].point], axis=0))
-            pseudo_annotation = BallDetection("pseudo-annotation", detections[i1].camera_idx, point2D, value=values_matrix[i1, i2])
-            #for i in sorted([i1, i2], reverse=True): # safe delete using decreasing indices
-            #    del detections[i]
-            return pseudo_annotation
-        return None
-
-    def __call__(self, instant_key, instant):
-        sequence_frame_index = instant.frame_indices[0] # use index from first camera by default
-        detections = self.database[instant.arena_label, instant.game_id].get(sequence_frame_index, [])
-        if detections:
-            point = lambda point: Point2D(point.y, point.x) if self.xy_inverted else point
-            unpack = lambda detection: Ball({
-                "origin": detection.model,
-                "center": instant.calibs[detection.camera_idx].project_2D_to_3D(point(detection.point), Z=0),
-                "image": detection.camera_idx,
-                "visible": True, # visible enough to have been detected by a detector
-                "state": instant.ball_state,
-                "value": detection.value
-            })
-            pseudo_annotation = self.extract_pseudo_annotation(detections)
-            if pseudo_annotation is not None:
-                instant.ball = unpack(pseudo_annotation)
-                instant.annotations.extend([instant.ball])
-            instant.detections.extend(map(unpack, detections))
-        return instant
-
-
 class AddBallSizeFactory(Transform):
     def __call__(self, view_key, view):
         ball = view.ball
         predicate = lambda ball: ball.origin in ['annotation', 'interpolation']
-        return {"ball_size": view.calib.compute_length2D(ball, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
+        return {"ball_size": view.calib.compute_length2D(ball.center, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
 
 class AddBallStateFactory(Transform):
     def __call__(self, view_key, view):
