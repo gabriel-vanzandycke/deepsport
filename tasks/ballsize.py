@@ -7,8 +7,6 @@ import pandas
 import tensorflow as tf
 
 from calib3d import Calib, Point3D, Point2D
-from deepsport_utilities.ds.instants_dataset.views_transforms import ViewRandomCropperTransform
-from deepsport_utilities.transforms import Transform
 from experimentator.tf2_chunk_processors import ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator import Callback, ExperimentMode
@@ -84,6 +82,7 @@ class ComputeDiameterError(Callback):
             state["ball_size_metrics"] = None
             for name in ["MADE", "MAPE", "MARE"]:
                 state[name] = np.nan
+
 @dataclass
 class ComputeDetectionMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
