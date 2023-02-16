@@ -362,9 +362,7 @@ class DecodePif(ChunkProcessor):
         mean = tf.stack((posx[tf.newaxis]+chunk["xs"], posy[tf.newaxis]+chunk["ys"]), axis=-1)*self.stride
         variance  = tf.maximum(1.0, chunk["scales"]*self.stride/2)**2
         confidence = chunk["confidence"]
-
         chunk["batch_heatmap"] = tf.math.minimum(self.max_value, self.layer(mean, variance, confidence)/(self.neighbours**2))
-        print(chunk['batch_heatmap'].shape)
 
 class DecodePIFLayer(tf.keras.layers.Layer):
     def __init__(self, stride, *args, min_confidence=0.1, min_variance=None, impl='__dynamic_loop_over_cells_with_max_implementation', **kwargs):
