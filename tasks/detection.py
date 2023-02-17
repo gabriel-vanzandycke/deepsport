@@ -12,7 +12,6 @@ from calib3d import Point2D, Point3D
 from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics
 
 from deepsport_utilities.transforms import Transform
-from deepsport_utilities.utils import DelayedCallback
 from deepsport_utilities.ds.instants_dataset import Ball, BallState
 from experimentator import Callback, ChunkProcessor, ExperimentMode, build_experiment
 from experimentator.tf2_experiment import TensorflowExperiment
