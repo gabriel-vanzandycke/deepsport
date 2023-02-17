@@ -3,11 +3,10 @@ import mlworkflow as mlwf
 import experimentator
 import experimentator.wandb_experiment
 from experimentator import find
+
 import experimentator.tf2_experiment
 import experimentator.tf2_chunk_processors
-
 import deepsport_utilities.ds.instants_dataset
-
 import models.other
 import tasks.pifball
 
@@ -25,16 +24,16 @@ output_shape = (640, 640)
 depth_to_space = 2
 backbone_stride = 16
 
-size_min = 11
-size_max = 28
-
 # DeepSport Dataset
 dataset_name = "camera_with_ball_visible_views.pickle"
+size_min = 11
+size_max = 28
 transforms = [
     deepsport_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
         output_shape=output_shape,
         size_min=size_min,
-        size_max=size_max
+        size_max=size_max,
+        on_ball=.5,
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
@@ -43,14 +42,17 @@ transforms = [
     )
 ]
 
-dataset_splitter = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(validation_pc=0, testing_arena_labels=['KS-FR-GRAVELINES', 'KS-FR-STRASBOURG'])
+#dataset_splitter = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(validation_pc=0, testing_arena_labels=['KS-FR-GRAVELINES', 'KS-FR-STRASBOURG'])
+fold = 0
+dataset_splitter = deepsport_utilities.ds.instants_dataset.dataset_splitters.KFoldsArenaLabelsTestingDatasetSplitter(8, 0, 1)
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
-subsets = dataset_splitter(dataset)
+subsets = dataset_splitter(dataset, fold=fold)
+testing_arena_labels = dataset_splitter.testing_arena_labels
 
 
 
 # Training parameters
-batch_size = 16
+batch_size = 4
 
 k = [1]
 callbacks = [
@@ -70,7 +72,7 @@ callbacks = [
 lambdas = [30.0, 2.0, 2.0]
 globals().update(locals()) # required to use '' in lambdas
 chunk_processors = [
-    tasks.pifball.CastFloat(tensor_names=["batch_input_image", "batch_input_image2", "batch_target"]),
+    tasks.pifball.CastFloat(tensor_names=["batch_input_image", "batch_target"]),
     models.other.GammaAugmentation(tensor_name="batch_input_image"),
     lambda chunk: chunk.update({'batch_input': chunk["batch_input_image"]}),
     tasks.pifball.Normalize(tensor_names="batch_input"),

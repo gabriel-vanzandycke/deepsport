@@ -35,11 +35,12 @@ max_shift = 0
 
 globals().update(locals()) # required for lambda definition
 transforms = lambda scale: [
-    deepsport_utilities.ds.instants_dataset.BallCropperTransform(
+    deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
         output_shape=output_shape,
         scale_min=scale_min*scale,
         scale_max=scale_max*scale,
-        margin=side_length//2-max_shift
+        margin=side_length//2-max_shift,
+        on_ball=True,
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),

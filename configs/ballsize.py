@@ -27,11 +27,12 @@ size_min = 14
 size_max = 45
 max_shift = 0
 transforms = [
-    deepsport_utilities.ds.instants_dataset.BallCropperTransform(
+    deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
         output_shape=output_shape,
         size_min=size_min,
         size_max=size_max,
-        margin=side_length//2-max_shift
+        margin=side_length//2-max_shift,
+        on_ball=True,
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),

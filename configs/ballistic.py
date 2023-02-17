@@ -54,11 +54,12 @@ size_max = 45
 ballsize_dataset_name = "ballsize_dataset.pickle"
 ballsize_dataset = mlwf.PickledDataset(find(ballsize_dataset_name))
 ballsize_dataset = mlwf.TransformedDataset(ballsize_dataset, [
-    deepsport_utilities.ds.instants_dataset.BallCropperTransform(
+    deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
         output_shape=output_shape,
         size_min=size_min,
         size_max=size_max,
-        margin=side_length//2-max_shift
+        margin=side_length//2-max_shift,
+        on_ball=True
     ), data_extraction
 ])
 ballsize_subsets = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(testing_arena_labels)(ballsize_dataset)
@@ -70,11 +71,12 @@ scale_max = 1.25
 ballstate_dataset_name = "ballstate_dataset.pickle"
 ballstate_dataset = mlwf.PickledDataset(find(ballstate_dataset_name))
 ballstate_dataset = mlwf.TransformedDataset(ballstate_dataset, [
-    deepsport_utilities.ds.instants_dataset.BallCropperTransform(
+    deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
         output_shape=output_shape,
         scale_min=scale_min,
         scale_max=scale_max,
-        margin=side_length//2-max_shift
+        margin=side_length//2-max_shift,
+        on_ball=True
     ), data_extraction
 ])
 ballstate_subsets = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(testing_arena_labels)(ballstate_dataset)
