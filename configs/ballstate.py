@@ -31,7 +31,7 @@ output_shape = (side_length, side_length)
 dataset_name = "ballstate_dataset.pickle"
 scale_min = 0.75
 scale_max = 1.25
-max_shift = 0
+max_shift = 5
 
 globals().update(locals()) # required for lambda definition
 transforms = lambda scale: [
@@ -45,12 +45,16 @@ transforms = lambda scale: [
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory(),
-        tasks.ballstate.AddBallStateFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(),
     )
 ]
 
 dataset_splitter = "arenas_specific"
-dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms(1)))
+dataset = mlwf.PickledDataset(find(dataset_name))
+state_max = BallState.DRIBBLING # DRIBBLING=3, CONSTRAINT=2
+globals().update(locals()) # required for accessing state_max in lambda
+dataset = mlwf.FilteredDataset(dataset, lambda k, v: v.ball.state <= state_max)
+dataset = mlwf.CachedDataset(mlwf.TransformedDataset(dataset, transforms(1)))
 subsets = {
     "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-EVREUX"]),
     "random_shuffle": experimentator.BasicDatasetSplitter()
@@ -64,7 +68,7 @@ subsets.append(Subset("ballistic", SubsetType.EVAL, dataset))
 
 
 globals().update(locals()) # required to use 'BallState' in list comprehention
-classes = [BallState(i) for i in range(4)]
+classes = [BallState(i) for i in range(state_max+1)]
 
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
@@ -76,7 +80,7 @@ callbacks = [
     tasks.classification.ComputeConfusionMatrix(classes=classes),
     experimentator.wandb_experiment.LogStateWandB(),
     experimentator.LearningRateWarmUp(),
-    tasks.ballstate.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
+    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
 ]
 
 projector = "conv2d"

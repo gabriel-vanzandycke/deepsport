@@ -707,7 +707,8 @@ class BallStateAndBallSizeExperiment():
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
             batch_size = batch_size or self.batch_size
-            classes = [BallState.FLYING, BallState.CONSTRAINT, BallState.DRIBBLING]
+            classes = self.cfg['classes']
+            #classes = [BallState.FLYING, BallState.CONSTRAINT, BallState.DRIBBLING]
             get_class = lambda k,v: v['ball_state']
             keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
             # yields pairs of (keys, data)
