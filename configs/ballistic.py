@@ -32,8 +32,8 @@ data_extraction = deepsport_utilities.transforms.DataExtractorTransform(
     #deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory(),
     deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
     deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
-    tasks.ballstate.AddBallSizeFactory(),
-    tasks.ballstate.AddBallStateFactory(),
+    deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
+    deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(),
     tasks.ballstate.AddIsBallTargetFactory(unconfident_margin=unconfident_margin),
 )
 testing_arena_labels = ["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-GRAVELINES", "KS-FR-STRASBOURG"]
