@@ -1,24 +1,9 @@
-from dataclasses import dataclass
-import pickle
-import os
-from typing import NamedTuple
-
-import numpy as np
 import tensorflow as tf
-from matplotlib import cm
 
-from calib3d import Point2D
-from experimentator import build_experiment, Callback, ExperimentMode, ChunkProcessor, Subset
+from experimentator import ExperimentMode, ChunkProcessor, Subset
 from experimentator.tf2_experiment import TensorflowExperiment
-from deepsport_utilities.ds.instants_dataset import Ball
-from deepsport_utilities.ds.instants_dataset.views_transforms import NaiveViewRandomCropperTransform
 from deepsport_utilities.transforms import Transform
-from deepsport_utilities.court import BALL_DIAMETER
-from deepsport_utilities.utils import DefaultDict
 from dataset_utilities.ds.raw_sequences_dataset import BallState
-
-from models.other import CropBlockDividable
-from tasks.detection import EnlargeTarget
 
 
 class BallStateClassification(TensorflowExperiment):
@@ -42,24 +27,16 @@ class BallStateClassification(TensorflowExperiment):
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
             batch_size = batch_size or self.batch_size
-            classes = [BallState.FLYING, BallState.CONSTRAINT, BallState.DRIBBLING]
+            classes = list(self.cfg['classes']) # makes a copy
+            classes.remove(BallState.NONE)
             get_class = lambda k,v: v['ball_state']
             keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
             # yields pairs of (keys, data)
             yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
 
-class AddBallSizeFactory(Transform):
-    def __call__(self, view_key, view):
-        ball = view.ball
-        predicate = lambda ball: ball.origin in ['annotation', 'interpolation']
-        return {"ball_size": view.calib.compute_length2D(ball.center, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
-
-class AddBallStateFactory(Transform):
-    def __call__(self, view_key, view):
-        return {"ball_state": view.ball.state or BallState.NONE}
 
 class AddIsBallTargetFactory(Transform):
-    def __init__(self, unconfident_margin=.2):
+    def __init__(self, unconfident_margin=.1):
         self.unconfident_margin = unconfident_margin
     def __call__(self, view_key, view):
         ball = view.ball
@@ -71,19 +48,6 @@ class AddIsBallTargetFactory(Transform):
             return {"is_ball": 0}
         else:
             return {'is_ball': 0 + self.unconfident_margin}
-
-
-
-@dataclass
-class ExtractClassificationMetrics(Callback):
-    before = ["GatherCycleMetrics"]
-    after = ["ComputeClassifactionMetrics", "ComputeConfusionMatrix"]
-    when = ExperimentMode.EVAL
-    class_name: str
-    class_index: int
-    def on_cycle_end(self, state, **_):
-        for metric in ['precision', 'recall']:
-            state[f"{self.class_name}_{metric}"] = state['classification_metrics'][metric].iloc[self.class_index]
 
 
 class ChannelsReductionLayer(ChunkProcessor):

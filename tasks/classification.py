@@ -7,7 +7,7 @@ import pandas
 from experimentator import Callback, ExperimentMode, ConfusionMatrix
 import sklearn.metrics
 
-from tasks.detection import divide, DEFAULT_THRESHOLDS
+from tasks.detection import divide
 
 
 
@@ -38,6 +38,18 @@ class ComputeClassifactionMetrics(Callback):
             "recall": divide(TP, TP + FN),
         }
         state["classification_metrics"] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
+
+
+@dataclass
+class ExtractClassificationMetrics(Callback):
+    before = ["GatherCycleMetrics"]
+    after = ["ComputeClassifactionMetrics", "ComputeConfusionMatrix"]
+    when = ExperimentMode.EVAL
+    class_name: str
+    class_index: int
+    def on_cycle_end(self, state, **_):
+        for metric in ['precision', 'recall']:
+            state[f"{self.class_name}_{metric}"] = state['classification_metrics'][metric].iloc[self.class_index]
 
 
 @dataclass
