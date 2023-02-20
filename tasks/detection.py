@@ -282,13 +282,15 @@ class DetectBalls():
 
 
 class ImportDetectionsTransform(Transform):
-    def __init__(self, dataset_folder, proximity_threshold):
+    def __init__(self, dataset_folder, proximity_threshold=15,
+                 estimate_pseudo_annotation=True, ignore_true_positives=True):
         self.dataset_folder = dataset_folder
         self.database_path = os.path.join(dataset_folder, BALL_DETECTIONS_DATABASE_PATH)
         self.proximity_threshold = proximity_threshold # pixels
+        self.ignore_true_positives = ignore_true_positives
+        self.estimate_pseudo_annotation = estimate_pseudo_annotation
 
-    def extract_pseudo_annotation(self, instant):
-        detections = instant.detections
+    def extract_pseudo_annotation(self, detections, ball_state=BallState.NONE):
         camera = np.array([d.camera_idx for d in detections])
         models = np.array([d.model for d in detections])
         points = Point2D([d.point for d in detections])
@@ -309,7 +311,7 @@ class ImportDetectionsTransform(Transform):
                 "image": detections[i1].camera_idx,
                 "visible": True, # visible enough to have been detected by a detector
                 "value": values_matrix[i1, i2],
-                "state": getattr(instant, "ball_state", BallState.NONE),
+                "state": ball_state,
             })
         return None
 
@@ -318,12 +320,21 @@ class ImportDetectionsTransform(Transform):
         if key not in self.database:
             self.database[key] = pickle.load(open(self.database_path.format(*key), "rb"))
         detections = self.database[key].get(instant_key.timestamp, [])
-        instant.detections.extend(detections)
 
         balls = [a for a in instant.annotations if isinstance(a, Ball)]
-        if not balls:
-            pseudo_annotation = self.extract_pseudo_annotation(instant)
+        if balls:
+            instant.ball = balls[0]
+        elif self.estimate_pseudo_annotation:
+            pseudo_annotation = self.extract_pseudo_annotation(detections)
             if pseudo_annotation is not None:
                 instant.annotations.extend([pseudo_annotation])
                 instant.ball = pseudo_annotation
+
+        instant.detections = []
+        if self.ignore_true_positives:
+            annotations = Point3D([a.center for a in instant.annotations if isinstance(a, Ball)])
+            for d in detections:
+                if np.any((d.point - instant.calibs[d.image].project_3D_to_2D(annotations)).norm() < self.proximity_threshold):
+                    instant.annotations.append(d)
+
         return instant
