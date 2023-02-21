@@ -102,7 +102,8 @@ callbacks = [
     tasks.classification.ComputeConfusionMatrix(classes=classes),
     tasks.ballsize.ComputeDiameterError(),
     tasks.ballsize.ComputeDetectionMetrics(),
-    tasks.ballstate.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
+    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
+    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(2)), class_index=2),
     experimentator.wandb_experiment.LogStateWandB(),
 ]
 

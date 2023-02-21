@@ -57,7 +57,7 @@ dataset = mlwf.FilteredDataset(dataset, lambda k, v: v.ball.state <= state_max)
 dataset = mlwf.CachedDataset(mlwf.TransformedDataset(dataset, transforms(1)))
 subsets = {
     "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-EVREUX"]),
-    "random_shuffle": experimentator.BasicDatasetSplitter()
+    "random_shuffle": experimentator.BasicDatasetSplitter(),
 }[dataset_splitter](dataset)
 
 
@@ -81,6 +81,7 @@ callbacks = [
     experimentator.wandb_experiment.LogStateWandB(),
     experimentator.LearningRateWarmUp(),
     tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
+    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(2)), class_index=2),
 ]
 
 projector = "conv2d"
