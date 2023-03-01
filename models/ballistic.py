@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Callable
+import random
 
 from calib3d import Point3D, Point2D
 import numpy as np
@@ -61,9 +61,7 @@ class Window(tuple):
     @cached_property
     def K(self):
         return np.stack([self[i].calib.K for i in self.indices])
-    def add_model(self, model):
-        for sample in self:
-            setdefaultattr(sample, "models", []).append(model)
+
 
 # MSE solution of the 3D problem
 class Fitter3D:
@@ -81,7 +79,56 @@ class Fitter3D:
         except np.linalg.LinAlgError:
             return None
 
-        return BallisticModel(initial_guess, T0)
+        model = BallisticModel(initial_guess, T0)
+        window.inliers =
+        return model
+
+@dataclass
+class RanSaC(Fitter3D):
+    n_ini: int = 3
+    n_models: int = 200
+    inlier_threshold: float = 31 # cm between model and detection to be considered inlier
+    distance_threshold: float = 100 # minimum ms betwen two initial random samples
+    min_inliers: int = 4
+    tau_cost_ransac: float = 0.5 # TODO
+    alpha: int = 2 # denominator exponent in mean square error computation
+    def __call__(self, window):
+        best_model_error = np.inf
+        model = None
+
+        indices = window.indices
+        timestamps = window.timestamps
+        eye = np.eye(len(timestamps), dtype=np.bool)
+        for _ in range(self.n_models):
+            # initial samples: 3 detections separated by at least 100ms
+            samples_mask = eye[np.random.randint(len(timestamps))]
+            while samples_mask.sum() < self.n_ini:
+                mask = np.all(np.abs(timestamps - timestamps[samples_mask, None]) >= self.distance_threshold, axis=0)
+                samples_mask += random.choice(eye[mask])
+
+            # fit a model to the sample
+            sample_model = super().__call__(Window([window[i] for i in indices[samples_mask]]))
+            inliers_mask = np.linalg.norm(sample_model(timestamps) - window.points3D, axis=0) < self.inlier_threshold
+            model_length = np.where(inliers_mask)[0].ptp()
+            if inliers_mask.sum() < max(self.min_inliers, model_length // 2):
+                continue
+
+            # refine the model on initial inliers
+            sample_model = super().__call__(Window([window[i] for i in indices[inliers_mask]]))
+            model_error = np.linalg.norm(sample_model(timestamps[inliers_mask]) - window.points3D[inliers_mask], axis=0)
+            model_error = np.sum(model_error)/len(model_error)**self.alpha
+
+            # update best model
+            if model_error < self.tau_cost_ransac and model_error < best_model_error:
+                model = sample_model
+                best_model_error = model_error
+
+        # TODO:
+        # - remove models whose vertical amplitude is falt (assessed based on appropriate threshold)
+        # or because their ocupancy rate is lower than 50% (defined by the ratio between the number of 3D candidates
+        #                                   close to the detected ballistic trajectory and its duration in timestamps.)
+
+        return model
 
 @dataclass
 class Fitter2D(Fitter3D):
@@ -198,26 +245,32 @@ class SlidingWindow(list):
         self.max_duration = max_duration
         self.popped = 0
         self.windows = []#Window(self)
+    @property
+    def window(self):
+        return self.windows[-1]
     def pop(self):
         self.popped += 1
+        self.windows.pop(0)
         return super().pop(0)
+    def append(self, item):
+        super().append(item)
+        self.windows.append(Window(self))
     def enqueue(self):
         self.append(next(self.gen))
         while self.duration < self.min_duration:
             self.append(next(self.gen))
-        self.windows.append(Window(self))
     def dequeue(self):
         self.windows.pop(0)
         yield self.pop()
         while self.duration > self.min_duration:
             yield self.pop()
-        self.windows.append(Window(self))
     @property
     def duration(self):
         detection_timestamps = [item.timestamp for item in self if hasattr(item, "ball")]
         if len(detection_timestamps) < 2:
             return 0
         return detection_timestamps[-1] - detection_timestamps[0]
+
 
 class TrajectoryDetector:
     """ Detect ballistic motion by sliding a window over successive frames and
