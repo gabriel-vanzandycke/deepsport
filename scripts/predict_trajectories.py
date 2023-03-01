@@ -11,22 +11,24 @@ import wandb
 from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
 
-from tasks.ballistic import model, MatchTrajectories, SelectBall
+from tasks.ballistic import MatchTrajectories, SelectBall
+from models.ballistic import TrajectoryDetector, FilteredFitter2D, Fitter2D
 
 dotenv.load_dotenv()
 
 parameters = {
-    "min_inliers":          ('fixed', 2),#   ("suggest_int",   {'low':  0, 'high':   8, 'step':  1}),
+    "min_inliers":             ("suggest_int",   {'low':  2, 'high':   8, 'step':  1}),
     "max_outliers_ratio":      ("suggest_float", {'low': .1, 'high':  .9, 'step': .1}),
-    "min_flyings":             ("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
-    "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':   1, 'step': .1}),
-    "max_inliers_decrease": ('fixed', .1),#("suggest_float", {'low':  0, 'high':  .2, 'step':.05}),
-    "scale":                   ("suggest_float", {'low': -1, 'high':   2, 'step': .5}),
-    "p_error_threshold":       ("suggest_int",   {'low':  1, 'high':  10, 'step':  1}),
+    #"min_flyings":             ("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
+    #"max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':   1, 'step': .1}),
+    #"max_inliers_decrease": ('fixed', .1),#("suggest_float", {'low':  0, 'high':  .2, 'step':.05}),
+    "scale":                   ("suggest_float", {'low': -2, 'high':   2, 'step': .5}),
+    "position_error_threshold":("suggest_int",   {'low':  1, 'high':  10, 'step':  1}),
     "d_error_weight":          ("suggest_int",   {'low':  0, 'high': 100, 'step': 10}),
     "min_distance_cm":         ("suggest_int",   {'low': 50, 'high': 200, 'step': 50}),
     "min_distance_px":         ("suggest_int",   {'low': 50, 'high': 200, 'step': 50}),
     "min_window_length":       ("suggest_int",   {'low':160, 'high': 350, 'step': 10}),
+    "first_inlier":            ("suggest_int",   {'low':  1, 'high':   4, 'step':  1}),
 }
 
 if __name__ == '__main__':
@@ -38,14 +40,15 @@ if __name__ == '__main__':
     parser.add_argument("--n-trials", type=int, default=100)
     parser.add_argument("--show-progress", action='store_true', default=False)
     parser.add_argument("--kwargs", nargs='*', default=[])
+    parser.add_argument("--skip-wandb", action='store_true', default=False)
     args = parser.parse_args()
 
     cast = lambda k, v: (k, eval(v))
     fixed_kwargs = dict([cast(*kwarg.split('=')) for kwarg in args.kwargs])
 
-    if args.method == 'baseline':
-        fixed_kwargs.update(min_flyings=0)
-        fixed_kwargs.update(max_nonflyings_ratio=0)
+    # if args.method == 'baseline':
+    #     fixed_kwargs.update(min_flyings=0)
+    #     fixed_kwargs.update(max_nonflyings_ratio=0)
 
     objectives = {
         's_precision': 'maximize',
@@ -73,7 +76,8 @@ if __name__ == '__main__':
         dds = PickledDataset(find(args.positions_dataset))
         dds = TransformedDataset(dds, [SelectBall('ballseg')])
 
-        sw = model(**kwargs)
+        fitter_types = (FilteredFitter2D, Fitter2D)
+        sw = TrajectoryDetector(fitter_types, **kwargs)
 
         agen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
         pgen = sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))

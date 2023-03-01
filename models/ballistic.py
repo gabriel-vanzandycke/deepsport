@@ -43,6 +43,10 @@ class BallisticModel():
 
 
 class Window(tuple):
+    def __new__(cls, args, popped):
+        self = super().__new__(cls, tuple(args))
+        self.popped = popped
+        return self
     @cached_property
     def indices(self):
         return [i for i, s in enumerate(self) if hasattr(s, 'ball')]
@@ -61,6 +65,10 @@ class Window(tuple):
     @cached_property
     def K(self):
         return np.stack([self[i].calib.K for i in self.indices])
+    #def __str__(self):
+        #return " "*self.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
+
+closed_mask_indices = lambda mask: np.arange(np.min(np.where(mask)), np.max(np.where(mask))+1)
 
 
 # MSE solution of the 3D problem
@@ -80,7 +88,7 @@ class Fitter3D:
             return None
 
         model = BallisticModel(initial_guess, T0)
-        window.inliers =
+        model.window = window
         return model
 
 @dataclass
@@ -121,10 +129,12 @@ class RanSaC(Fitter3D):
             # update best model
             if model_error < self.tau_cost_ransac and model_error < best_model_error:
                 model = sample_model
+                model_indices = closed_mask_indices(inliers_mask)
+                model.window = Window([window[i] for i in model_indices])
                 best_model_error = model_error
 
         # TODO:
-        # - remove models whose vertical amplitude is falt (assessed based on appropriate threshold)
+        # - remove models whose vertical amplitude is flat (assessed based on appropriate threshold)
         # or because their ocupancy rate is lower than 50% (defined by the ratio between the number of 3D candidates
         #                                   close to the detected ballistic trajectory and its duration in timestamps.)
 
@@ -168,14 +178,11 @@ class Fitter2D(Fitter3D):
         if not result.success:
             return None
 
-        return BallisticModel(result['x'], T0)
+        model = BallisticModel(result['x'], T0)
+        model.window = window
+        return model
 
 
-# Model attributes required
-# - cameras: for interpolation of missed detections
-# - inliers: for interpolation of missed detections
-# - start_timestamp: for displaying the model
-# - end_timestamp:   for displaying the model
 
 repr_dict = {
     (True, True): 'ʘ',
@@ -192,6 +199,7 @@ class FilteredFitter2D(Fitter2D):
     first_inlier: int = 2
     position_error_threshold: float = 2
     scale: float = 0.1
+    display: bool = False
 
     def compute_inliers(self, window, model):
         inliers_condition = lambda position_error: position_error < self.position_error_threshold * (1 + self.scale*np.sin(np.linspace(0, np.pi, len(position_error))))
@@ -207,61 +215,49 @@ class FilteredFitter2D(Fitter2D):
         if (model := super().__call__(window)) is None:
             return None
 
-        window.add_model(model)
-        window.inliers = self.compute_inliers(window, model)
-        print("  "*window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers[i]] for i, s in enumerate(window)]), end="|\t")
+        inliers_mask = self.compute_inliers(window, model)
+        self.display and print("  "*window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
 
-        if sum(inliers) < self.min_inliers:
+        if sum(inliers_mask) < self.min_inliers:
             model.message = "too few inliers"
-            print(model.message, flush=True)
+            self.display and print(model.message, flush=True)
             return None
 
-        if sum(inliers[0:self.first_inlier]) == 0:
+        if sum(inliers_mask[0:self.first_inlier]) == 0:
             model.message = f"{self.first_inlier} first samples are not inliers"
-            print(model.message, flush=True)
+            self.display and print(model.message, flush=True)
             return None
 
-        outliers_ratio = 1 - sum(inliers)/(np.ptp(np.where(inliers)) + 1)
+        model_indices = closed_mask_indices(inliers_mask)
+        model.window = Window([window[i] for i in model_indices], popped=window.popped + model_indices[0])
+
+        outliers_ratio = 1 - sum(inliers_mask)/len(model_indices)
         if outliers_ratio > self.max_outliers_ratio:
             model.message = "too many outliers"
-            print(model.message, flush=True)
+            self.display and print(model.message, flush=True)
             return None
 
         model.message = "proposed"
-        print(model.message, flush=True)
+        self.display and print(model.message, flush=True)
         return model
 
-@dataclass
-class PirntedFilteredFitter2D(FilteredFitter2D):
-    def __call__(self, window):
-        model = super().__call__(window)
-        #print("  "*window.popped + " ".join([self.repr(s) for s in window]))
-        return model
 
 class SlidingWindow(list):
-    def __init__(self, gen, min_duration, max_duration):
+    def __init__(self, gen, min_duration):
         self.gen = gen
         self.min_duration = min_duration
-        self.max_duration = max_duration
         self.popped = 0
-        self.windows = []#Window(self)
-    @property
-    def window(self):
-        return self.windows[-1]
     def pop(self):
         self.popped += 1
-        self.windows.pop(0)
         return super().pop(0)
-    def append(self, item):
-        super().append(item)
-        self.windows.append(Window(self))
-    def enqueue(self):
-        self.append(next(self.gen))
+    def enqueue(self, n=1):
+        for _ in range(n):
+            self.append(next(self.gen))
         while self.duration < self.min_duration:
             self.append(next(self.gen))
-    def dequeue(self):
-        self.windows.pop(0)
-        yield self.pop()
+    def dequeue(self, n=1):
+        for _ in range(n):
+            yield self.pop()
         while self.duration > self.min_duration:
             yield self.pop()
     @property
@@ -272,49 +268,76 @@ class SlidingWindow(list):
         return detection_timestamps[-1] - detection_timestamps[0]
 
 
+
+RECOVERED_BALL_ORIGIN = 'fitting'
+
+
 class TrajectoryDetector:
     """ Detect ballistic motion by sliding a window over successive frames and
         fitting a ballistic model to the detections.
         Arguments:
             fitter (Fitter): Fits a model to a window of detections.
             min_window_length (int): minimum window length (in miliseconds).
-            max_window_length (int): maximum window length (in miliseconds).
     """
-    def __init__(self, fitter, min_window_length, max_window_length=np.inf):
+    def __init__(self, fitter_types, min_window_length, min_distance_px, min_distance_cm,
+                 **fitter_kwargs):
         self.min_window_length = min_window_length
-        self.max_window_length = max_window_length
-        self.fitter = fitter
+        self.min_distance_px = min_distance_px
+        self.min_distance_cm = min_distance_cm
+        self.fitter = type("Fitter", fitter_types, {})(**fitter_kwargs)
     """
         Inputs: generator of `Sample`s (containing ball detections or not)
         Outputs: generator of `Sample`s (with added balls where a model was found)
     """
     def __call__(self, gen):
-        sliding_window = SlidingWindow(gen, self.min_window_length, self.max_window_length)
+        sliding_window = SlidingWindow(gen, self.min_window_length)
         while True:
             try:
                 # Initialize sliding_window
                 sliding_window.enqueue()
 
                 # Move sliding_window forward until a model is found
-                while not (model := self.fitter(sliding_window.window)):
+                while not (model := self.fitter(Window(sliding_window, popped=sliding_window.popped))):
                     yield from sliding_window.dequeue()
                     sliding_window.enqueue()
 
                 # Grow sliding_window while model fits data
                 while True:
-                    window = sliding_window.window
                     sliding_window.enqueue()
-                    if not (new_model := self.fitter(sliding_window.window)):
+                    if not (new_model := self.fitter(Window(sliding_window, popped=sliding_window.popped))):
                         break
-                    if sum(sliding_window.window.inliers) >= sum(window.inliers):
+                    if len(new_model.window) >= len(model.window):
                         model = new_model
 
+                # discard model if it is too short
+                curve = model(model.window.timestamps)
+                distances_cm = np.linalg.norm(curve[:, 1:] - curve[:, :-1], axis=0)
 
-                # TODO: set model
-                sliding_window.add_model(model)
+                dist = lambda calib, i: np.linalg.norm(calib.project_3D_to_2D(curve[:, i:i+1]) - calib.project_3D_to_2D(curve[:, i-1:i]))
+                distances_px = [dist(model.window[i].calib, i) for i in model.window.indices]
 
-                #
-                yield from sliding_window.dequeue()
+                if sum(distances_cm) >= self.min_distance_cm and sum(distances_px) >= self.min_distance_px:
+                    # Set model
+                    for sample in model.window:
+                        if hasattr(sample, 'ball'):
+                            camera_idx = sample.ball.camera
+                        else:
+                            sample.timestamp = sample.timestamps[camera_idx]
+                            sample.ball = Ball({
+                                'origin': RECOVERED_BALL_ORIGIN,
+                                'center': model(sample.timestamp).tolist(),
+                                'image': camera_idx,
+                                'state': BallState.FLYING,
+                            })
+                        sample.ball.model = model
+                else:
+                    pass#print("skipped because of distance:", sum(distances_cm), sum(distances_px))
+
+                #print("  "*model.window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, True] for i, s in enumerate(model.window)]), end="|\t")
+                #print("model validated")
+
+                # dump samples
+                yield from sliding_window.dequeue(len(model.window))
 
             except StopIteration:
                 break

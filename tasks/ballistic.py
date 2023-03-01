@@ -290,7 +290,6 @@ class SlidingWindow:
         Outputs: generator of `Sample`s (with added balls where a model was found)
     """
     def __call__(self, gen):
-        #window = Window(gen)
         empty = False
         while not empty:
             try:
@@ -307,7 +306,7 @@ class SlidingWindow:
 
                 # Grow window while model fits data
                 chances = 1
-                while self.window_duration < self.max_window_length:
+                while self.window.duration < self.max_window_length:
                     # Add one sample (with ball) to the window
                     while not hasattr(sample := next(gen), 'ball'):
                         self.window.append(sample)
@@ -374,6 +373,7 @@ class SlidingWindow:
         # empty window once generator is fully consumed
         yield from self.pop(len(self.window))
 
+
 # class NaiveSlidingWindom(SlidingWindow):
 #     def __init__(self, *args,*, min_inliers, max_outliers_ratio=.4,
 #             max_inliers_decrease=.1, min_distance_cm=50, min_distance_px=50,
@@ -415,72 +415,72 @@ class BallStateSlidingWindow(SlidingWindow):
             self.print(flyings, model.mark, label='(flyings)')
         return model
 
-import random
+#import random
 
-class RANSAC():
-    def __init__(self, min_window_length=1000, step_size=500, n_models=500,
-        n_ini=3):
-        self.min_window_length = min_window_length
-        self.step_size = step_size
-        self.n_models = n_models
-        self.n_ini = n_ini
-        self.window = Window()
-        self.fitter = Fitter()
-    def fit(self):
-        for n in range(self.n_models):
-            # sample 3 points separated by at least 100ms
-            indices = []
-            for _ in range(self.n_ini):
-                condition = lambda i: all([self.window[i].key.timestamp - self.window[k].key.timestamp > 100 for k in indices])
-                indices.append(random.sample([i for i in range(len(self.window)) if condition(i)], 1)[0])
+# class RANSAC():
+#     def __init__(self, min_window_length=1000, step_size=500, n_models=500,
+#         n_ini=3):
+#         self.min_window_length = min_window_length
+#         self.step_size = step_size
+#         self.n_models = n_models
+#         self.n_ini = n_ini
+#         self.window = Window()
+#         self.fitter = Fitter()
+#     def fit(self):
+#         for n in range(self.n_models):
+#             # sample 3 points separated by at least 100ms
+#             indices = []
+#             for _ in range(self.n_ini):
+#                 condition = lambda i: all([self.window[i].key.timestamp - self.window[k].key.timestamp > 100 for k in indices])
+#                 indices.append(random.sample([i for i in range(len(self.window)) if condition(i)], 1)[0])
 
-            while
+#             while
 
-    def __call__(self, gen):
-        empty = False
-        while not empty:
-            try:
-                model = None # required if `next(gen)` raises `StopIteration`
-                while self.window.duration < self.min_window_length:
-                    self.window.append(next(gen))
+#     def __call__(self, gen):
+#         empty = False
+#         while not empty:
+#             try:
+#                 model = None # required if `next(gen)` raises `StopIteration`
+#                 while self.window.duration < self.min_window_length:
+#                     self.window.append(next(gen))
 
-                # move window forward
-                while (model := self.fit()) is None or not isinstance(model.mark, ModelMarkProposed):
-                    callback = lambda i, s: setattr(s.ball, "model", model) if hasattr(s, 'ball') else None
-                    yield from self.pop(1, callback=callback)
-                    while self.window.duration < self.min_window_length:
-                        self.window.append(next(gen))
+#                 # move window forward
+#                 while (model := self.fit()) is None or not isinstance(model.mark, ModelMarkProposed):
+#                     callback = lambda i, s: setattr(s.ball, "model", model) if hasattr(s, 'ball') else None
+#                     yield from self.pop(1, callback=callback)
+#                     while self.window.duration < self.min_window_length:
+#                         self.window.append(next(gen))
 
-                model.mark = ModelMarkAccepted(model.mark.reason)
+#                 model.mark = ModelMarkAccepted(model.mark.reason)
 
-                # discard irrelevenat models
-                timestamps = np.array([self.window[i].ball.timestamp for i in model.indices if hasattr(self.window[i], 'ball')])
-                points3D = model(timestamps)
-                distances_cm = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
-                if distances_cm.sum() < self.min_distance_cm:
-                    model.mark = ModelMarkDiscarded("3D curve too short")
+#                 # discard irrelevenat models
+#                 timestamps = np.array([self.window[i].ball.timestamp for i in model.indices if hasattr(self.window[i], 'ball')])
+#                 points3D = model(timestamps)
+#                 distances_cm = np.linalg.norm(points3D[:, 1:] - points3D[:, :-1], axis=0)
+#                 if distances_cm.sum() < self.min_distance_cm:
+#                     model.mark = ModelMarkDiscarded("3D curve too short")
 
-                position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index:point_index+1])
-                distances_px = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1]) if hasattr(self.window[sample_index], 'ball')]
-                if sum(distances_px) < self.min_distance_px:
-                    model.mark = ModelMarkDiscarded("2D curve too short")
+#                 position = lambda sample_index, point_index: self.window[sample_index].calib.project_3D_to_2D(points3D[:, point_index:point_index+1])
+#                 distances_px = [np.linalg.norm(position(sample_index, point_index) - position(sample_index, point_index+1)) for point_index, sample_index in enumerate(model.indices[:-1]) if hasattr(self.window[sample_index], 'ball')]
+#                 if sum(distances_px) < self.min_distance_px:
+#                     model.mark = ModelMarkDiscarded("2D curve too short")
 
-                self.print([i in model.indices for i in range(len(self.window))], model.mark)
-            except StopIteration: # `StopIteration` raised by empty generator
-                empty = True
+#                 self.print([i in model.indices for i in range(len(self.window))], model.mark)
+#             except StopIteration: # `StopIteration` raised by empty generator
+#                 empty = True
 
-            # pop model data
-            if model: # required if `StopIteration` is raised before `model` is assigned
-                callback = lambda i, s: setattr(setdefaultattr(s, 'ball', Ball({
-                    'origin': RECOVERED_BALL_ORIGIN,
-                    'center': model(s.timestamps[model.cameras[i]]).tolist(),
-                    'timestamp' : s.timestamps[model.cameras[i]],
-                    'image': model.cameras[i],
-                })), 'model', model if i in model.indices else None)
-                yield from self.pop(np.max(np.where(model.inliers))+1, callback=callback)
+#             # pop model data
+#             if model: # required if `StopIteration` is raised before `model` is assigned
+#                 callback = lambda i, s: setattr(setdefaultattr(s, 'ball', Ball({
+#                     'origin': RECOVERED_BALL_ORIGIN,
+#                     'center': model(s.timestamps[model.cameras[i]]).tolist(),
+#                     'timestamp' : s.timestamps[model.cameras[i]],
+#                     'image': model.cameras[i],
+#                 })), 'model', model if i in model.indices else None)
+#                 yield from self.pop(np.max(np.where(model.inliers))+1, callback=callback)
 
-        # empty window once generator is fully consumed
-        yield from self.pop(len(self.window))
+#         # empty window once generator is fully consumed
+#         yield from self.pop(len(self.window))
 
 
 
@@ -536,8 +536,8 @@ def compute_projection_error(true: Point3D, pred: Point3D):
 
 class MatchTrajectories:
     def __init__(self, min_duration=250, callback=None):
-        warnings.warn("not implemented")
-        raise NotImplementedError("# compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
+        warnings.warn("not implemented: compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
+        #raise NotImplementedError("# compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
         self.TP = []
         self.FP = []
         self.FN = []
@@ -587,7 +587,7 @@ class MatchTrajectories:
             keys = set(annotated_trajectory_samples.keys()) & set(predicted_trajectory_samples.keys())
             detected_ball3D =  Point3D([predicted_trajectory_samples[k].ball.center for k in keys])
             annotated_ball3D = Point3D([annotated_trajectory_samples[k].ball_annotations[0].center for k in keys])
-            ballistic_ball3D = Point3D([predicted_trajectory_samples[k].ball.model(predicted_trajectory_samples[k].ball.timestamp) for k in keys])
+            ballistic_ball3D = Point3D([predicted_trajectory_samples[k].ball.model(predicted_trajectory_samples[k].timestamp) for k in keys])
             self.detections_MAPE.extend(compute_projection_error(annotated_ball3D, detected_ball3D))
             self.ballistic_MAPE.extend(compute_projection_error(annotated_ball3D, ballistic_ball3D))
 
@@ -642,7 +642,7 @@ class MatchTrajectories:
             if not hasattr(sample, 'ball') \
             or not hasattr(sample.ball, 'model') \
             or sample.ball.model is None \
-            or not isinstance(sample.ball.model.mark, ModelMarkAccepted):
+            or not isinstance(getattr(sample.ball.model, "mark", ModelMarkAccepted()), ModelMarkAccepted):
                 self.predictions.append(0)
                 continue
 
@@ -737,10 +737,8 @@ class MatchTrajectories:
 
 
 class InstantRenderer():
-    def __init__(self, ids: InstantsDataset, min_duration: int, repeat_factor: int = 1):
+    def __init__(self, ids: InstantsDataset):
         self.ids = ids
-        self.min_duration = min_duration
-        self.repeat_factor = repeat_factor
         self.font_size = .8
 
     def draw_ball(self, pd, image, ball, color=None, label=None):
@@ -757,8 +755,10 @@ class InstantRenderer():
             cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, color, 2, lineType=cv2.LINE_AA)
 
     def draw_model(self, pd, image, model, color, label):
-        duration = model.end_timestamp - model.start_timestamp
-        timestamps = np.linspace(model.start_timestamp, model.end_timestamp, int(np.ceil(duration/10)+1))
+        start_timestamp = model.window[0].timestamp
+        end_timestamp = model.window[-1].timestamp
+        duration = end_timestamp - start_timestamp
+        timestamps = np.linspace(start_timestamp, end_timestamp, int(np.ceil(duration/10)+1))
         points3D = model(timestamps)
         ground3D = Point3D(points3D.x, points3D.y, np.zeros_like(points3D.x))
         start = Point3D(np.vstack([points3D[:, 0], ground3D[:, 0]]).T)
@@ -782,9 +782,9 @@ class InstantRenderer():
                 color = None if hasattr(ball, 'model') else ((255, 0, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255))
                 self.draw_ball(pd, image, ball, color=color, label=str(ball.state))
                 if model := getattr(ball, "model", None):
-                    self.draw_model(pd, image, model.initial_guess, color=(0, 255, 20), label="Initial guess")
-                    color = (250, 195, 0) if isinstance(model.mark, ModelMarkAccepted) else (250, 20, 30)
-                    self.draw_model(pd, image, model, color=color, label=getattr(model.mark, "reason", "Other"))
+                    #self.draw_model(pd, image, model.initial_guess, color=(0, 255, 20), label="Initial guess")
+                    #color = (250, 195, 0) if isinstance(model.mark, ModelMarkAccepted) else (250, 20, 30)
+                    self.draw_model(pd, image, model, color=color, label="")#getattr(model.mark, "reason", "Other"))
 
             # draw ball annotation if any
             if sample.ball_annotations:
@@ -812,7 +812,8 @@ class SelectBall:
     def __call__(self, key, item):
         try:
             item.ball = max([d for d in item.ball_detections if d.origin == self.origin], key=lambda d: d.value)
-            item.ball.timestamp = item.timestamps[item.ball.camera]
+            #item.ball.timestamp = item.timestamps[item.ball.camera]
+            item.timestamp = item.timestamps[item.ball.camera]
             item.calib = item.calibs[item.ball.camera]
         except ValueError:
             pass
