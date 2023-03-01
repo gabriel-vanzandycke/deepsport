@@ -4,7 +4,9 @@ import os
 import dotenv
 import numpy as np
 import optuna
+from optuna.integration import WeightsAndBiasesCallback
 from tqdm.auto import tqdm
+import wandb
 
 from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
@@ -46,15 +48,14 @@ if __name__ == '__main__':
         fixed_kwargs.update(max_nonflyings_ratio=0)
 
     objectives = {
-        #'IoU': 'maximize',
-        #'ballistic_MAPE': 'minimize'
         's_precision': 'maximize',
         's_recall': 'maximize',
-        #'overlap': 'maximize',
-        #'splitted_predicted_trajectories': 'minimize',
-        #'FP': 'minimize'
     }
 
+    wandb_kwargs = dict(project="ballistic")
+    wandb_cb = WeightsAndBiasesCallback(list(objectives.keys()), wandb_kwargs=wandb_kwargs, as_multirun=True)
+
+    @wandb_cb.track_in_wandb()
     def objective(trial):
         trial.set_user_attr('method', args.method)
         trial.set_user_attr('job_id', os.environ.get('SLURM_JOB_ID', None))
@@ -84,6 +85,7 @@ if __name__ == '__main__':
             trial.set_user_attr(key, value)
         for key, value in kwargs.items():
             trial.set_user_attr(key, value)
+        wandb.log({**compare.metrics, **kwargs})
 
         values = tuple(compare.metrics[name] for name in objectives)
         if np.any(np.isnan(values)):
@@ -105,12 +107,4 @@ if __name__ == '__main__':
         load_if_exists=True,
     )
 
-    # wandb_kwargs = dict(
-    #     project="ballistic",
-    #     reinit=True,
-    #     settings=wandb.Settings(show_emoji=False, _save_requirements=False)
-    # )
-    callbacks = [
-        #WeightsAndBiasesCallback(list(objectives.keys()), wandb_kwargs=wandb_kwargs, as_multirun=True),
-    ]
-    study.optimize(objective, n_trials=args.n_trials, callbacks=callbacks)
+    study.optimize(objective, n_trials=args.n_trials, callbacks=[wandb_cb])
