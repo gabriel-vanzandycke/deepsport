@@ -68,8 +68,6 @@ class Window(tuple):
     #def __str__(self):
         #return " "*self.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
 
-closed_mask_indices = lambda mask: np.arange(np.min(np.where(mask)), np.max(np.where(mask))+1)
-
 
 # MSE solution of the 3D problem
 class Fitter3D:
@@ -100,37 +98,37 @@ class RanSaC(Fitter3D):
     min_inliers: int = 4
     tau_cost_ransac: float = 0.5 # TODO
     alpha: int = 2 # denominator exponent in mean square error computation
+    display: bool = False
     def __call__(self, window):
         best_model_error = np.inf
         model = None
 
-        indices = window.indices
+        indices = np.array(window.indices)
         timestamps = window.timestamps
         eye = np.eye(len(timestamps), dtype=np.bool)
         for _ in range(self.n_models):
             # initial samples: 3 detections separated by at least 100ms
-            samples_mask = eye[np.random.randint(len(timestamps))]
+            samples_mask = np.array(eye[np.random.randint(len(timestamps))])
             while samples_mask.sum() < self.n_ini:
                 mask = np.all(np.abs(timestamps - timestamps[samples_mask, None]) >= self.distance_threshold, axis=0)
                 samples_mask += random.choice(eye[mask])
 
             # fit a model to the sample
-            sample_model = super().__call__(Window([window[i] for i in indices[samples_mask]]))
+            sample_model = super().__call__(Window([window[i] for i in indices[samples_mask]], window.popped + np.where(samples_mask)[0][0]))
             inliers_mask = np.linalg.norm(sample_model(timestamps) - window.points3D, axis=0) < self.inlier_threshold
-            model_length = np.where(inliers_mask)[0].ptp()
-            if inliers_mask.sum() < max(self.min_inliers, model_length // 2):
+            if inliers_mask.sum() < self.min_inliers or inliers_mask.sum() < (model_length := np.where(inliers_mask)[0].ptp()) /2:
                 continue
 
             # refine the model on initial inliers
-            sample_model = super().__call__(Window([window[i] for i in indices[inliers_mask]]))
+            sample_model = super().__call__(Window([window[i] for i in indices[inliers_mask]], window.popped + np.where(inliers_mask)[0][0]))
             model_error = np.linalg.norm(sample_model(timestamps[inliers_mask]) - window.points3D[inliers_mask], axis=0)
             model_error = np.sum(model_error)/len(model_error)**self.alpha
 
             # update best model
             if model_error < self.tau_cost_ransac and model_error < best_model_error:
                 model = sample_model
-                model_indices = closed_mask_indices(inliers_mask)
-                model.window = Window([window[i] for i in model_indices])
+                model_indices = np.arange(np.min(np.where(inliers_mask)), np.max(np.where(inliers_mask))+1)
+                model.window = Window([window[i] for i in model_indices], window.popped + model_indices[0])
                 best_model_error = model_error
 
         # TODO:
@@ -228,7 +226,7 @@ class FilteredFitter2D(Fitter2D):
             self.display and print(model.message, flush=True)
             return None
 
-        model_indices = closed_mask_indices(inliers_mask)
+        model_indices = np.arange(np.min(np.where(inliers_mask)), np.max(np.where(inliers_mask))+1)
         model.window = Window([window[i] for i in model_indices], popped=window.popped + model_indices[0])
 
         outliers_ratio = 1 - sum(inliers_mask)/len(model_indices)
@@ -265,6 +263,7 @@ class UseStateFilteredFitter2D(FilteredFitter2D):
         self.display and print(message, flush=True)
 
         return super().__call__(window)
+
 
 class SlidingWindow(list):
     def __init__(self, gen, min_duration):
@@ -309,7 +308,7 @@ class TrajectoryDetector:
         self.min_distance_px = min_distance_px
         self.min_distance_cm = min_distance_cm
         self.fitter = type("Fitter", fitter_types, {})(**fitter_kwargs)
-        self.display = True
+        self.display = False
     """
         Inputs: generator of `Sample`s (containing ball detections or not)
         Outputs: generator of `Sample`s (with added balls where a model was found)
@@ -361,9 +360,6 @@ class TrajectoryDetector:
                 else:
                     self.display and print("skipped because of distance:", sum(distances_cm), sum(distances_px))
 
-                #print("  "*model.window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, True] for i, s in enumerate(model.window)]), end="|\t")
-                #print("model validated")
-
                 # dump samples
                 yield from sliding_window.dequeue(len(model.window))
 
@@ -374,48 +370,3 @@ class TrajectoryDetector:
         yield from sliding_window
 
 
-
-
-# class SlidingWindow(list):
-#     def __init__(self, gen, min_duration, max_duration):
-#         self.gen = gen
-#         self.min_duration = min_duration
-#         self.max_duration = max_duration
-#         self.popped = 0
-#     def pop(self, index):
-#         self.popped += 1
-#         return super().pop(index)
-#     def enqueue(self):
-#         self.clear_cache()
-#         self.append(next(self.gen)) # do-while emulation
-#         while self.duration < self.min_duration:
-#             self.append(next(self.gen))
-#     def dequeue(self):
-#         self.clear_cache()
-#         yield self.pop(0) # do-while emulation
-#         while self.duration > self.min_duration:
-#             yield self.pop(0)
-#     def add_model(self, model):
-#         for sample in self:
-#             setdefaultattr(sample, "models", []).append(model)
-#     @cached_property
-#     def indices(self):
-#         return [i for i, s in enumerate(self) if hasattr(s, 'ball')]
-#     @cached_property
-#     def timestamps(self):
-#         return np.array([self[i].timestamp for i in self.indices])
-#     @cached_property
-#     def points3D(self):
-#         return Point3D([self[i].ball.center for i in self.indices])
-#     @cached_property
-#     def P(self):
-#         return np.stack([self[i].calib.P for i in self.indices])
-#     @cached_property
-#     def RT(self):
-#         return np.stack([np.hstack([self[i].calib.R, self[i].calib.T]) for i in self.indices])
-#     @cached_property
-#     def K(self):
-#         return np.stack([self[i].calib.K for i in self.indices])
-#     def clear_cache(self):
-#         for attr in ['timestamps', 'points3D', 'indices', 'P', 'RT', 'K']:
-#             self.__dict__.pop(attr, None)
