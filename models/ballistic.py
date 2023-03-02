@@ -94,10 +94,10 @@ class RanSaC(Fitter3D):
     n_ini: int = 3
     n_models: int = 200
     inlier_threshold: float = 31 # cm between model and detection to be considered inlier
-    distance_threshold: float = 100 # minimum ms betwen two initial random samples
     min_inliers: int = 4
-    tau_cost_ransac: float = 0.5 # TODO
+    distance_threshold: float = 100 # minimum ms betwen two initial random samples
     alpha: int = 2 # denominator exponent in mean square error computation
+    #tau_cost_ransac: float = 0.5 # TODO
     display: bool = False
     def __call__(self, window):
         best_model_error = np.inf
@@ -121,11 +121,11 @@ class RanSaC(Fitter3D):
 
             # refine the model on initial inliers
             sample_model = super().__call__(Window([window[i] for i in indices[inliers_mask]], window.popped + np.where(inliers_mask)[0][0]))
-            model_error = np.linalg.norm(sample_model(timestamps[inliers_mask]) - window.points3D[inliers_mask], axis=0)
+            model_error = np.linalg.norm(sample_model(timestamps[inliers_mask]) - window.points3D[:, inliers_mask], axis=0)
             model_error = np.sum(model_error)/len(model_error)**self.alpha
 
             # update best model
-            if model_error < self.tau_cost_ransac and model_error < best_model_error:
+            if model_error < best_model_error:
                 model = sample_model
                 model_indices = np.arange(np.min(np.where(inliers_mask)), np.max(np.where(inliers_mask))+1)
                 model.window = Window([window[i] for i in model_indices], window.popped + model_indices[0])
@@ -135,7 +135,19 @@ class RanSaC(Fitter3D):
         # - remove models whose vertical amplitude is flat (assessed based on appropriate threshold)
         # or because their ocupancy rate is lower than 50% (defined by the ratio between the number of 3D candidates
         #                                   close to the detected ballistic trajectory and its duration in timestamps.)
-
+        # zhigh = 350;
+        # zlow = 120;
+        # thres_deltazhigh = 40;      % minimum difference between the highest
+        #                             % and lowest ball candidates on a
+        #                             % ballistic trajectory if all the candidates
+        #                             % are above zhigh
+        # thres_deltazlow = 30;       % minimum difference between the highest
+        #                             % and lowest ball candidates on a
+        #                             % ballistic trajectory if all the candidates
+        #                             % are bellow zlow
+        # thres_deltaz = 10;          % minimum difference between the highest
+        #                             % and lowest ball candidates on a
+        #                             % ballistic trajectory
         return model
 
 @dataclass
@@ -308,7 +320,7 @@ class TrajectoryDetector:
         self.min_distance_px = min_distance_px
         self.min_distance_cm = min_distance_cm
         self.fitter = type("Fitter", fitter_types, {})(**fitter_kwargs)
-        self.display = False
+        self.display = True
     """
         Inputs: generator of `Sample`s (containing ball detections or not)
         Outputs: generator of `Sample`s (with added balls where a model was found)
@@ -347,7 +359,7 @@ class TrajectoryDetector:
                     # Set model
                     for sample in model.window:
                         if hasattr(sample, 'ball'):
-                            camera_idx = sample.ball.camera
+                            camera_idx = [s.ball.camera for s in model.window if hasattr(s, 'ball')][0]
                         else:
                             sample.timestamp = sample.timestamps[camera_idx]
                             sample.ball = Ball({
