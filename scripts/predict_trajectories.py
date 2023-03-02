@@ -12,15 +12,15 @@ from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
 
 from tasks.ballistic import MatchTrajectories, SelectBall
-from models.ballistic import TrajectoryDetector, FilteredFitter2D, Fitter2D
+from models.ballistic import TrajectoryDetector, UseStateFilteredFitter2D, FilteredFitter2D, Fitter2D
 
 dotenv.load_dotenv()
 
 parameters = {
     "min_inliers":             ("suggest_int",   {'low':  2, 'high':   8, 'step':  1}),
     "max_outliers_ratio":      ("suggest_float", {'low': .1, 'high':  .9, 'step': .1}),
-    #"min_flyings":             ("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
-    #"max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':   1, 'step': .1}),
+    "min_flyings":             ("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
+    "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':   1, 'step': .1}),
     #"max_inliers_decrease": ('fixed', .1),#("suggest_float", {'low':  0, 'high':  .2, 'step':.05}),
     "scale":                   ("suggest_float", {'low': -2, 'high':   2, 'step': .5}),
     "position_error_threshold":("suggest_int",   {'low':  1, 'high':  10, 'step':  1}),
@@ -46,14 +46,21 @@ if __name__ == '__main__':
     cast = lambda k, v: (k, eval(v))
     fixed_kwargs = dict([cast(*kwarg.split('=')) for kwarg in args.kwargs])
 
-    # if args.method == 'baseline':
-    #     fixed_kwargs.update(min_flyings=0)
-    #     fixed_kwargs.update(max_nonflyings_ratio=0)
-
     objectives = {
         's_precision': 'maximize',
         's_recall': 'maximize',
     }
+
+    if args.method == 'baseline':
+        for name in ['min_flyings', 'max_nonflyings_ratio']:
+            del parameters[name]
+
+    fitter_types = {
+        'baseline': (FilteredFitter2D, Fitter2D),
+        'usestate': (UseStateFilteredFitter2D, FilteredFitter2D, Fitter2D)
+    }[args.method]
+
+    progress_wrapper = tqdm if args.show_progress else lambda x: x
 
     wandb_kwargs = dict(project="ballistic")
     wandb_cb = WeightsAndBiasesCallback(list(objectives.keys()), wandb_kwargs=wandb_kwargs, as_multirun=True)
@@ -71,12 +78,9 @@ if __name__ == '__main__':
                 else:
                     kwargs.update({name: getattr(trial, suggest_fct)(name, **params)})
 
-        progress_wrapper = tqdm if args.show_progress else lambda x: x
-
         dds = PickledDataset(find(args.positions_dataset))
         dds = TransformedDataset(dds, [SelectBall('ballseg')])
 
-        fitter_types = (FilteredFitter2D, Fitter2D)
         sw = TrajectoryDetector(fitter_types, **kwargs)
 
         agen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
@@ -97,7 +101,7 @@ if __name__ == '__main__':
         return values
 
 
-    # RDBStorage with sqlite doesn't handle concurrency on NFS storage
+    # using 'JournalStorage' because 'RDBStorage' with sqlite doesn't handle concurrency on NFS storage
     filename = f"ballistic_{args.name}_{args.method}.db"
     storage = optuna.storages.JournalStorage(
         optuna.storages.JournalFileStorage(filename,

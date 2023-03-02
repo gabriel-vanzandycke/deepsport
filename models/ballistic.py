@@ -49,7 +49,7 @@ class Window(tuple):
         return self
     @cached_property
     def indices(self):
-        return [i for i, s in enumerate(self) if hasattr(s, 'ball')]
+        return [i for i, s in enumerate(self) if hasattr(s, 'ball') and hasattr(s, 'calib')]
     @cached_property
     def timestamps(self):
         return np.array([self[i].timestamp for i in self.indices])
@@ -241,6 +241,30 @@ class FilteredFitter2D(Fitter2D):
         self.display and print(model.message, flush=True)
         return model
 
+@dataclass
+class UseStateFilteredFitter2D(FilteredFitter2D):
+    min_flyings: int = 1
+    max_nonflyings_ratio: float = 0.8
+    display: bool = False
+    def __call__(self, window):
+        flyings_mask = np.array([hasattr(s, 'ball') and s.ball.state == BallState.FLYING for s in window])
+        self.display and print("  "*window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, flyings_mask[i]] for i, s in enumerate(window)]), end="|\t")
+
+        if sum(flyings_mask) < self.min_flyings:
+            message = "too few flying samples"
+            self.display and print(message, flush=True)
+            return None
+
+        nonflyings_ratio = 1 - sum(flyings_mask)/(np.ptp(np.where(flyings_mask)) + 1) if np.any(flyings_mask) else 0
+        if nonflyings_ratio > self.max_nonflyings_ratio:
+            message = "too many non-flying samples"
+            self.display and print(message, flush=True)
+            return None
+
+        message = "accepted by flying standards"
+        self.display and print(message, flush=True)
+
+        return super().__call__(window)
 
 class SlidingWindow(list):
     def __init__(self, gen, min_duration):
@@ -285,6 +309,7 @@ class TrajectoryDetector:
         self.min_distance_px = min_distance_px
         self.min_distance_cm = min_distance_cm
         self.fitter = type("Fitter", fitter_types, {})(**fitter_kwargs)
+        self.display = True
     """
         Inputs: generator of `Sample`s (containing ball detections or not)
         Outputs: generator of `Sample`s (with added balls where a model was found)
@@ -309,6 +334,8 @@ class TrajectoryDetector:
                     if len(new_model.window) >= len(model.window):
                         model = new_model
 
+                self.display and print("  "*model.window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, True] for i, s in enumerate(model.window)]), end="|\t")
+
                 # discard model if it is too short
                 curve = model(model.window.timestamps)
                 distances_cm = np.linalg.norm(curve[:, 1:] - curve[:, :-1], axis=0)
@@ -317,6 +344,7 @@ class TrajectoryDetector:
                 distances_px = [dist(model.window[i].calib, i) for i in model.window.indices]
 
                 if sum(distances_cm) >= self.min_distance_cm and sum(distances_px) >= self.min_distance_px:
+                    self.display and print("validated")
                     # Set model
                     for sample in model.window:
                         if hasattr(sample, 'ball'):
@@ -331,7 +359,7 @@ class TrajectoryDetector:
                             })
                         sample.ball.model = model
                 else:
-                    pass#print("skipped because of distance:", sum(distances_cm), sum(distances_px))
+                    self.display and print("skipped because of distance:", sum(distances_cm), sum(distances_px))
 
                 #print("  "*model.window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, True] for i, s in enumerate(model.window)]), end="|\t")
                 #print("model validated")
