@@ -11,7 +11,7 @@ import wandb
 from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
 
-from tasks.ballistic import MatchTrajectories, SelectBall
+from tasks.ballistic import MatchTrajectories, SelectBall, ComputeMetrics
 from models.ballistic import TrajectoryDetector, UseStateFilteredFitter2D, FilteredFitter2D, Fitter2D
 
 dotenv.load_dotenv()
@@ -83,17 +83,24 @@ if __name__ == '__main__':
 
         sw = TrajectoryDetector(fitter_types, **kwargs)
 
-        agen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
-        pgen = sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))
+        compare = ComputeMetrics()
+        for sample in compare(sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))):
+            pass
+        #agen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
+        #pgen = sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))
 
-        compare = MatchTrajectories(min_duration=args.min_duration)
-        compare(agen, pgen)
+        #compare = MatchTrajectories(min_duration=args.min_duration)
+        #compare(agen, pgen)
 
         for key, value in compare.metrics.items():
             trial.set_user_attr(key, value)
         for key, value in kwargs.items():
             trial.set_user_attr(key, value)
-        wandb.log({**compare.metrics, **kwargs})
+        wandb.log({**compare.metrics, **kwargs,
+            'method': args.method,
+            'job_id': os.environ.get('SLURM_JOB_ID', None),
+            'group_name': args.name,
+        })
 
         values = tuple(compare.metrics[name] for name in objectives)
         if np.any(np.isnan(values)):
