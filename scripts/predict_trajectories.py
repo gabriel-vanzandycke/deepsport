@@ -83,7 +83,7 @@ if __name__ == '__main__':
 
         sw = TrajectoryDetector(fitter_types, **kwargs)
 
-        compare = ComputeMetrics()
+        compare = ComputeMetrics(min_duration=args.min_duration)
         for sample in compare(sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))):
             pass
         #agen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
