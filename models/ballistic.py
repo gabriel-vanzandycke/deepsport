@@ -7,9 +7,7 @@ import numpy as np
 import scipy.optimize
 
 from deepsport_utilities.court import BALL_DIAMETER
-from deepsport_utilities.utils import setdefaultattr
-from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, Ball
-from deepsport_utilities.dataset import Subset
+from deepsport_utilities.ds.instants_dataset import BallState, Ball
 
 
 g = 9.81 * 100 /(1000*1000) # m/s² => cm/ms²
@@ -65,6 +63,9 @@ class Window(tuple):
     @cached_property
     def K(self):
         return np.stack([self[i].calib.K for i in self.indices])
+    @property
+    def duration(self):
+        return self.timestamps[-1] - self.timestamps[0]
     #def __str__(self):
         #return " "*self.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
 
@@ -304,7 +305,7 @@ class SlidingWindow(list):
 
 
 
-RECOVERED_BALL_ORIGIN = 'fitting'
+INTERPOLATED_BALL_ORIGIN = 'fitting'
 
 
 class TrajectoryDetector:
@@ -320,7 +321,7 @@ class TrajectoryDetector:
         self.min_distance_px = min_distance_px
         self.min_distance_cm = min_distance_cm
         self.fitter = type("Fitter", fitter_types, {})(**fitter_kwargs)
-        self.display = True
+        self.display = fitter_kwargs.get('display', False)
     """
         Inputs: generator of `Sample`s (containing ball detections or not)
         Outputs: generator of `Sample`s (with added balls where a model was found)
@@ -363,7 +364,7 @@ class TrajectoryDetector:
                         else:
                             sample.timestamp = sample.timestamps[camera_idx]
                             sample.ball = Ball({
-                                'origin': RECOVERED_BALL_ORIGIN,
+                                'origin': INTERPOLATED_BALL_ORIGIN,
                                 'center': model(sample.timestamp).tolist(),
                                 'image': camera_idx,
                                 'state': BallState.FLYING,
