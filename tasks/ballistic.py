@@ -8,7 +8,7 @@ from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState
 from deepsport_utilities.dataset import Subset
 
-from models.ballistic import INTERPOLATED_BALL_ORIGIN
+from models.ballistic import FITTING_BALL_ORIGIN
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
 
@@ -39,22 +39,23 @@ class ComputeMetrics:
                         self.TP += 1
                     elif sample.ball.model.window.duration >= self.min_duration:
                         self.FP += 1
-                    if sample.ball.origin == INTERPOLATED_BALL_ORIGIN:
+                    if sample.ball.origin == FITTING_BALL_ORIGIN:
                         self.interpolated += 1
                 else:
                     if sample.ball_state == BallState.FLYING:
                         self.FN += 1
                     else:
                         self.TN += 1
-                if len(getattr(sample, 'ball_annotations', [])) > 0:
-                    true_center = sample.ball_annotations[0].center
+                true_balls = [a for a in getattr(sample, 'ball_annotations', []) if a.origin in ['interpolation', 'annotation']]
+                if true_balls:
+                    true_center = true_balls[0].center
                     if hasattr(sample.ball, 'model'):
                         error = compute_projection_error(true_center, sample.ball.model(sample.timestamp))
                         self.ballistic_restricted_MAPE.append(error)
                     else:
                         error = compute_projection_error(true_center, sample.ball.center)
                     self.ballistic_all_MAPE.append(error)
-                    if sample.ball.origin != INTERPOLATED_BALL_ORIGIN:
+                    if sample.ball.origin != FITTING_BALL_ORIGIN:
                         self.detections_MAPE.append(compute_projection_error(true_center, sample.ball.center))
             yield sample
     @property
