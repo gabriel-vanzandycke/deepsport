@@ -9,7 +9,7 @@ from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState
 from deepsport_utilities.dataset import Subset
 
-from models.ballistic import FITTING_BALL_ORIGIN
+from models.ballistic import FITTED_BALL_ORIGIN
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
 
@@ -38,7 +38,7 @@ class ComputeSampleMetrics:
                     elif sample.ball_state != BallState.NONE \
                      and sample.ball.model.window.duration >= self.min_duration:
                         self.FP += 1
-                    if sample.ball.origin == FITTING_BALL_ORIGIN:
+                    if sample.ball.origin == FITTED_BALL_ORIGIN:
                         self.interpolated += 1
                 else:
                     if sample.ball_state == BallState.FLYING:
@@ -54,7 +54,7 @@ class ComputeSampleMetrics:
                     else:
                         error = compute_projection_error(true_center, sample.ball.center)
                     self.ballistic_all_MAPE.append(error)
-                    if sample.ball.origin != FITTING_BALL_ORIGIN:
+                    if sample.ball.origin != FITTED_BALL_ORIGIN:
                         self.detections_MAPE.append(compute_projection_error(true_center, sample.ball.center))
             yield sample
     @property
