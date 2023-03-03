@@ -1,3 +1,6 @@
+from typing import NamedTuple
+
+from calib3d import Point2D
 import tensorflow as tf
 
 from experimentator import ExperimentMode, ChunkProcessor, Subset
@@ -96,3 +99,9 @@ class CombineLosses(ChunkProcessor):
         self.names = names
     def __call__(self, chunk):
         chunk["loss"] = tf.reduce_sum([chunk[name]*w for name, w in zip(self.names, self.weights)])
+
+class BallDetection(NamedTuple): # for retro-compatibility
+    model: str
+    camera_idx: int
+    point: Point2D
+    value: float
