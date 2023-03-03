@@ -305,7 +305,7 @@ class SlidingWindow(list):
 
 
 
-INTERPOLATED_BALL_ORIGIN = 'fitting'
+FITTING_BALL_ORIGIN = 'fitting'
 
 
 class TrajectoryDetector:
@@ -364,7 +364,7 @@ class TrajectoryDetector:
                         else:
                             sample.timestamp = sample.timestamps[camera_idx]
                             sample.ball = Ball({
-                                'origin': INTERPOLATED_BALL_ORIGIN,
+                                'origin': FITTING_BALL_ORIGIN,
                                 'center': model(sample.timestamp).tolist(),
                                 'image': camera_idx,
                                 'state': BallState.FLYING,
