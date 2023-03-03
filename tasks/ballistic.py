@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import warnings
 
 from calib3d import Point3D, ProjectiveDrawer
@@ -20,31 +21,29 @@ def compute_projection_error(true_center: Point3D, pred_center: Point3D):
     difference.z = 0 # set z coordinate to 0 to compute projection error on the ground
     return np.linalg.norm(difference, axis=0)
 
-class ComputeMetrics:
-    def __init__(self, min_duration):
-        self.min_duration = min_duration
-    TP = 0
-    FP = 0
-    FN = 0
-    TN = 0
-    ballistic_all_MAPE = []         # MAPE between GT and ballistic models or detections if no ballistic model is found
-    ballistic_restricted_MAPE = []  # MAPE between GT and detected ballistic models
-    detections_MAPE = []            # MAPE between GT and all original detections
-    interpolated = 0
+@dataclass
+class ComputeSampleMetrics:
+    min_duration: int = 250 # ballistic model shorter than `min_duration` (in miliseconds) won't be counted as FP
+    def __post_init__(self):
+        self.TP = self.FP = self.FN = self.TN = self.interpolated = 0
+        self.ballistic_all_MAPE = []         # MAPE between GT and ballistic models or detections if no ballistic model is found
+        self.ballistic_restricted_MAPE = []  # MAPE between GT and detected ballistic models
+        self.detections_MAPE = []            # MAPE between GT and all original detections
     def __call__(self, gen):
-        for sample in gen:
+        for i, sample in enumerate(gen):
             if hasattr(sample, 'ball'):
                 if hasattr(sample.ball, 'model'):
                     if sample.ball_state == BallState.FLYING:
                         self.TP += 1
-                    elif sample.ball.model.window.duration >= self.min_duration:
+                    elif sample.ball_state != BallState.NONE \
+                     and sample.ball.model.window.duration >= self.min_duration:
                         self.FP += 1
                     if sample.ball.origin == FITTING_BALL_ORIGIN:
                         self.interpolated += 1
                 else:
                     if sample.ball_state == BallState.FLYING:
                         self.FN += 1
-                    else:
+                    elif sample.ball_state != BallState.NONE:
                         self.TN += 1
                 true_balls = [a for a in getattr(sample, 'ball_annotations', []) if a.origin in ['interpolation', 'annotation']]
                 if true_balls:
@@ -99,9 +98,9 @@ class Trajectory:
 
 
 class MatchTrajectories:
+    # compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
     def __init__(self, min_duration=250, callback=None):
         warnings.warn("not implemented: compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
-        #raise NotImplementedError("# compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
         self.TP = []
         self.FP = []
         self.FN = []
