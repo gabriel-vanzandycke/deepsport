@@ -67,9 +67,7 @@ if __name__ == '__main__':
 
     @wandb_cb.track_in_wandb()
     def objective(trial):
-        trial.set_user_attr('method', args.method)
-        trial.set_user_attr('job_id', os.environ.get('SLURM_JOB_ID', None))
-
+        # Sample parameters
         kwargs = fixed_kwargs.copy()
         for name, (suggest_fct, params) in parameters.items():
             if name not in kwargs:
@@ -78,37 +76,39 @@ if __name__ == '__main__':
                 else:
                     kwargs.update({name: getattr(trial, suggest_fct)(name, **params)})
 
-        dds = PickledDataset(find(args.positions_dataset))
-        dds = TransformedDataset(dds, [SelectBall('ballseg')])
-
-        sw = TrajectoryDetector(fitter_types, **kwargs)
-
-        compare = ComputeMetrics(min_duration=args.min_duration)
-        for sample in compare(sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))):
-            pass
-        #agen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
-        #pgen = sw((dds.query_item(k) for k in progress_wrapper(sorted(dds.keys))))
-
-        #compare = MatchTrajectories(min_duration=args.min_duration)
-        #compare(agen, pgen)
-
-        for key, value in compare.metrics.items():
-            trial.set_user_attr(key, value)
+        # Record parameters
         for key, value in kwargs.items():
             trial.set_user_attr(key, value)
-        wandb.log({**compare.metrics, **kwargs,
+        trial.set_user_attr('method', args.method)
+        trial.set_user_attr('job_id', os.environ.get('SLURM_JOB_ID', None))
+        wandb.config.udpate({**kwargs, **{
             'method': args.method,
             'job_id': os.environ.get('SLURM_JOB_ID', None),
             'group_name': args.name,
-        })
+        }})
 
+        # Process sequence
+        dds = PickledDataset(find(args.positions_dataset))
+        dds = TransformedDataset(dds, [SelectBall('ballseg')])
+        gen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
+        sw = TrajectoryDetector(fitter_types, **kwargs)
+        compare = ComputeMetrics(min_duration=args.min_duration)
+        for sample in compare(sw(gen)):
+            pass
+
+        # Log metrics
+        for key, value in compare.metrics.items():
+            trial.set_user_attr(key, value)
+        wandb.log(compare.metrics)
+
+        # Return objectives
         values = tuple(compare.metrics[name] for name in objectives)
         if np.any(np.isnan(values)):
             raise optuna.TrialPruned()
         return values
 
 
-    # using 'JournalStorage' because 'RDBStorage' with sqlite doesn't handle concurrency on NFS storage
+    # Using 'JournalStorage' because 'RDBStorage' with sqlite doesn't handle concurrency on NFS storage
     filename = f"ballistic_{args.name}_{args.method}.db"
     storage = optuna.storages.JournalStorage(
         optuna.storages.JournalFileStorage(filename,
