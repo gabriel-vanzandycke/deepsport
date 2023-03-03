@@ -62,7 +62,11 @@ if __name__ == '__main__':
 
     progress_wrapper = tqdm if args.show_progress else lambda x: x
 
-    wandb_kwargs = dict(project="ballistic")
+    wandb_kwargs = dict(project="ballistic", config={
+        'method': args.method,
+        'job_id': os.environ.get('SLURM_JOB_ID', None),
+        'group_name': args.name,
+    })
     wandb_cb = WeightsAndBiasesCallback(list(objectives.keys()), wandb_kwargs=wandb_kwargs, as_multirun=True)
 
     @wandb_cb.track_in_wandb()
@@ -77,15 +81,11 @@ if __name__ == '__main__':
                     kwargs.update({name: getattr(trial, suggest_fct)(name, **params)})
 
         # Record parameters
-        for key, value in kwargs.items():
-            trial.set_user_attr(key, value)
         trial.set_user_attr('method', args.method)
         trial.set_user_attr('job_id', os.environ.get('SLURM_JOB_ID', None))
-        wandb.config.udpate({**kwargs, **{
-            'method': args.method,
-            'job_id': os.environ.get('SLURM_JOB_ID', None),
-            'group_name': args.name,
-        }})
+        for key, value in kwargs.items():
+            trial.set_user_attr(key, value)
+            wandb.config[key] = value
 
         # Process sequence
         dds = PickledDataset(find(args.positions_dataset))
