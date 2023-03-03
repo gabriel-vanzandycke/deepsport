@@ -68,8 +68,8 @@ class ComputeSampleMetrics:
             "ballistic_restricted_MAPE": np.mean(self.ballistic_restricted_MAPE),
             "detections_MAPE": np.mean(self.detections_MAPE),
             "interpolated": self.interpolated,
-            's_precision': self.TP / (self.TP + self.FP) if self.TP + self.FP > 0 else 0,
-            's_recall': self.TP / (self.TP + self.FN) if self.TP + self.FN > 0 else 0,
+            's_precision': self.TP / (self.TP + self.FP) if self.TP > 0 else 0,
+            's_recall': self.TP / (self.TP + self.FN) if self.TP > 0 else 0,
         }
 
 
