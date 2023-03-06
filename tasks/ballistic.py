@@ -137,7 +137,7 @@ class MatchTrajectories:
         self.TP.append((a.trajectory_id, p.trajectory_id))
         self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
         self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
-        self.recovered.append(len([s for s in p.samples if s.ball.origin == RECOVERED_BALL_ORIGIN]))
+        self.recovered.append(len([s for s in p.samples if s.ball.origin == FITTED_BALL_ORIGIN]))
         self.overlap.append(a - p)
         self.intersection.append(a - p)
         self.union.append(a + p)
@@ -146,7 +146,7 @@ class MatchTrajectories:
         # compute MAPE, MARE, MADE if ball 3D position was annotated
         if any([s.ball_annotations and np.abs(s.ball_annotations[0].center.z) > 0.1 for s in a.samples]):
             annotated_trajectory_samples = {s.key: s for s in a.samples if s.ball_annotations}
-            predicted_trajectory_samples = {s.key: s for s in p.samples if s.ball.origin is not RECOVERED_BALL_ORIGIN}
+            predicted_trajectory_samples = {s.key: s for s in p.samples if s.ball.origin is not FITTED_BALL_ORIGIN}
             keys = set(annotated_trajectory_samples.keys()) & set(predicted_trajectory_samples.keys())
             detected_ball3D =  Point3D([predicted_trajectory_samples[k].ball.center for k in keys])
             annotated_ball3D = Point3D([annotated_trajectory_samples[k].ball_annotations[0].center for k in keys])
