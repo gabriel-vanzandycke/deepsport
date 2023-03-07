@@ -348,9 +348,11 @@ class ImportDetectionsTransform(Transform):
                 instant.ball = pseudo_annotation
 
         instant.detections = []
-        if self.remove_true_positives:
+        if self.remove_true_positives and len([a for a in instant.annotations if a.type == 'ball']) > 0:
             annotations = Point3D([a.center for a in instant.annotations if isinstance(a, Ball)])
             cond = lambda d: np.any(np.linalg.norm(d.point - instant.calibs[d.camera].project_3D_to_2D(annotations)) > self.proximity_threshold)
-            instant.detections.extend(filter(cond, detections))
+        else:
+            cond = lambda d: True
+        instant.detections.extend(filter(cond, detections))
 
         return instant
