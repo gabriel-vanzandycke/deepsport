@@ -225,7 +225,8 @@ class EnlargeTarget(ChunkProcessor):
         chunk["batch_target"] = tf.nn.max_pool2d(chunk["batch_target"][..., tf.newaxis], self.pool_size, strides=1, padding='SAME')
 
 
-BALL_DETECTIONS_DATABASE_PATH = "{}/{}/balls3d.pickle"
+BALL_DETECTIONS_DATABASE_PATH = "{}/{}/ball_detections.pickle"
+BALL_DETECTIONS_DATABASE_PATH_OLD = "{}/{}/balls3d.pickle"
 PIFBALL_THRESHOLD = 0.05
 BALLSEG_THRESHOLD = 0.6
 
@@ -265,28 +266,31 @@ class DetectBalls():
                     yield ball
 
     def __call__(self, instant_key, instant):
-        key = (instant_key.arena_label, instant_key.game_id)
+        filename = self.database_path.format(instant_key.arena_label, instant_key.game_id)
 
         # Load existing database
-        if os.path.isfile(self.database_path.format(*key)):
-            database = pickle.load(open(self.database_path.format(*key), 'rb'))
-        else:
-            database = {}
-        detections = database.setdefault(instant_key.timestamp, [])
+        database = pickle.load(open(filename, 'rb')) if os.path.isfile(filename) else {}
+
+        # Detect balls
+        detections = database.get(instant_key.timestamp, [])
+        detections = list(filter(lambda d: d.origin != self.name, detections)) # remove previous detections from given model
         detections.extend(self.detect(instant))
+        database[instant_key.timestamp] = detections
 
         # Save updated database
-        pickle.dump(database, open(self.database_path.format(*key), 'wb'))
+        pickle.dump(database, open(filename, 'wb'))
 
         return instant
 
 
 class ImportDetectionsTransform(Transform):
     def __init__(self, dataset_folder, proximity_threshold=15, new_version=True,
-                 estimate_pseudo_annotation=True, remove_true_positives=True):
-        self.database_path = os.path.join(dataset_folder, BALL_DETECTIONS_DATABASE_PATH)
+                 estimate_pseudo_annotation=True, remove_true_positives=True,
+                 remove_duplicates=False):
+        self.database_path = os.path.join(dataset_folder, BALL_DETECTIONS_DATABASE_PATH if new_version else BALL_DETECTIONS_DATABASE_PATH_OLD)
         self.proximity_threshold = proximity_threshold # pixels
         self.remove_true_positives = remove_true_positives
+        self.remove_duplicates = remove_duplicates
         self.estimate_pseudo_annotation = estimate_pseudo_annotation
         self.new_version = new_version
         self.database = {}
@@ -316,7 +320,16 @@ class ImportDetectionsTransform(Transform):
             })
         return None
 
+    def keep_unique_detections(self, calibs, detections):
+        kept_detections = []
+        for d in detections:
+            projected = lambda detection: calibs[d.camera].project_3D_to_2D(detection.center)
+            if not any(np.linalg.norm(projected(d) - projected(d2)) < self.proximity_threshold for d2 in kept_detections):
+                kept_detections.append(d)
+        return kept_detections
+
     def __call__(self, instant_key, instant):
+        # Load database
         key = (instant_key.arena_label, instant_key.game_id)
         if key not in self.database:
             self.database[key] = pickle.load(open(self.database_path.format(*key), "rb"))
@@ -338,7 +351,9 @@ class ImportDetectionsTransform(Transform):
                 return ball
             detections = list(map(unpack, detections))
 
+        # Compute pseudo-annotation from detections
         annotations = [a for a in instant.annotations if isinstance(a, Ball)]
+        instant.ball = None
         if annotations:
             instant.ball = annotations[0]
         elif self.estimate_pseudo_annotation and len(detections) > 1:
@@ -347,12 +362,18 @@ class ImportDetectionsTransform(Transform):
                 instant.annotations.extend([pseudo_annotation])
                 instant.ball = pseudo_annotation
 
-        instant.detections = []
-        if self.remove_true_positives and len([a for a in instant.annotations if a.type == 'ball']) > 0:
-            annotations = Point3D([a.center for a in instant.annotations if isinstance(a, Ball)])
+        # Remove true positives
+        instant.detections = getattr(instant, "detections", [])
+        annotated_balls = [a.center for a in instant.annotations if a.type == 'ball']
+        if self.remove_true_positives and len(annotated_balls) > 0:
+            annotations = Point3D(annotated_balls)
             cond = lambda d: np.any(np.linalg.norm(d.point - instant.calibs[d.camera].project_3D_to_2D(annotations)) > self.proximity_threshold)
         else:
             cond = lambda d: True
         instant.detections.extend(filter(cond, detections))
+
+        # Remove duplicates
+        if self.remove_duplicates and instant.detections:
+            instant.detections = self.keep_unique_detections(instant.calibs, instant.detections)
 
         return instant
