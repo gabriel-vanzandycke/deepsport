@@ -50,13 +50,15 @@ transforms = lambda scale: [
 ]
 
 dataset_splitter = "arenas_specific"
+testing_arena_labels = ["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-EVREUX"]
+
 dataset = mlwf.PickledDataset(find(dataset_name))
 state_max = BallState.DRIBBLING # DRIBBLING=3, CONSTRAINT=2
 globals().update(locals()) # required for accessing state_max in lambda
 dataset = mlwf.FilteredDataset(dataset, lambda k, v: v.ball.state <= state_max)
 dataset = mlwf.CachedDataset(mlwf.TransformedDataset(dataset, transforms(1)))
 subsets = {
-    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-EVREUX"]),
+    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(testing_arena_labels),
     "random_shuffle": experimentator.BasicDatasetSplitter(),
 }[dataset_splitter](dataset)
 
