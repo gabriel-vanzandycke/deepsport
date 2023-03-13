@@ -24,6 +24,7 @@ def compute_projection_error(true_center: Point3D, pred_center: Point3D):
 @dataclass
 class ComputeSampleMetrics:
     min_duration: int = 250 # ballistic model shorter than `min_duration` (in miliseconds) won't be counted as FP
+    min_duration_TP: bool = False # if True, ballistic model shorter than `min_duration` (in miliseconds) won't be counted as TP
     def __post_init__(self):
         self.TP = self.FP = self.FN = self.TN = self.interpolated = 0
         self.ballistic_all_MAPE = []         # MAPE between GT and ballistic models or detections if no ballistic model is found
@@ -33,7 +34,8 @@ class ComputeSampleMetrics:
         for i, sample in enumerate(gen):
             if hasattr(sample, 'ball'):
                 if hasattr(sample.ball, 'model'):
-                    if sample.ball_state == BallState.FLYING:
+                    if sample.ball_state == BallState.FLYING \
+                     and (not self.min_duration_TP or sample.ball.model.window.duration >= self.min_duration): # new here
                         self.TP += 1
                     elif sample.ball_state != BallState.NONE \
                      and sample.ball.model.window.duration >= self.min_duration:
@@ -329,33 +331,44 @@ class InstantRenderer():
         for line in [points3D, ground3D, start, stop]:
             pd.polylines(image, line, color=color, lineType=cv2.LINE_AA)
 
+        points3D = model(model.window.timestamps)
+        points2D = pd.calib.project_3D_to_2D(points3D)
+        radii = pd.calib.compute_length2D(points3D, BALL_DIAMETER/2)
+        for i, (point3D, point2D, radius) in enumerate(zip(points3D, points2D, radii)):
+            pd.draw_line(image, point3D, model.window[i].ball.center, (200, 200, 200), 1)
+            radius = 2
+            cv2.circle(image, point2D.to_int_tuple(), int(radius), color, -1)
+
         # Write model mark
         point3D = Point3D(points3D[:, 0])
+        point3D.z = 0
         x, y = pd.calib.project_3D_to_2D(point3D).to_int_tuple()
-        cv2.putText(image, label, (x, y-30), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, (250, 20, 30), 2, lineType=cv2.LINE_AA)
+        cv2.putText(image, label, (x, y+20), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, (250, 20, 30), 2, lineType=cv2.LINE_AA)
 
 
     def __call__(self, sample):
         instant = self.ids.query_item(sample.key)
-        model = None
         for image, calib in zip(instant.images, instant.calibs):
             pd = ProjectiveDrawer(calib, (0, 120, 255), segments=1)
 
             if ball := getattr(sample, "ball", None):
-                color = None if hasattr(ball, 'model') else ((255, 0, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255))
-                self.draw_ball(pd, image, ball, color=color, label=str(ball.state))
+                for model in getattr(sample, "models", []):
+                    self.draw_model(pd, image, model, color=(255, 0, 20), label=model.message)
                 if model := getattr(ball, "model", None):
                     #self.draw_model(pd, image, model.initial_guess, color=(0, 255, 20), label="Initial guess")
                     #color = (250, 195, 0) if isinstance(model.mark, ModelMarkAccepted) else (250, 20, 30)
-                    self.draw_model(pd, image, model, color=color, label="")#getattr(model.mark, "reason", "Other"))
+                    self.draw_model(pd, image, model, color=(250, 195, 0), label="")#getattr(model.mark, "reason", "Other"))
+                color = (150, 150, 150) if hasattr(ball, 'model') else ((255, 0, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255))
+                label = f"{ball.value:0.2f} - {str(ball.state)}" if ball.value else f"{str(ball.state)}"
+                self.draw_ball(pd, image, ball, color=color, label=label)
 
-            # draw ball annotation if any
+            # draw annotations
+            color = (0, 255, 20)
             if sample.ball_annotations:
                 ball = sample.ball_annotations[0]
-                if ball.center.z < -0.01: # z pointing down
-                    color = (0, 255, 20)
+                if ball.origin in ['annotation', 'interpolation']:
                     self.draw_ball(pd, image, ball, color=color)
-            cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, (0, 255, 20), 2, lineType=cv2.LINE_AA)
+            cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, color, 2, lineType=cv2.LINE_AA)
 
         return np.hstack(instant.images)
 
@@ -380,6 +393,7 @@ class SelectBall:
             item.calib = item.calibs[item.ball.camera]
         except ValueError:
             pass
+        item.models = []
         return item
 
 
