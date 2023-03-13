@@ -19,7 +19,7 @@ args = parser.parse_args()
 
 # The `dataset_config` is used to create each dataset item
 dataset_config = {
-    "download_flags": DownloadFlags.WITH_IMAGE | DownloadFlags.WITH_CALIB_FILE,
+    "download_flags": DownloadFlags.WITH_IMAGE | DownloadFlags.WITH_FOLLOWING_IMAGE | DownloadFlags.WITH_CALIB_FILE,
     "dataset_folder": args.dataset_folder  # informs dataset items of raw files location
 }
 
