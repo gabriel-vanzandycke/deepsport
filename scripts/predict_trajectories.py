@@ -37,6 +37,7 @@ if __name__ == '__main__':
     parser.add_argument("--name", default='')
     parser.add_argument("--method", default='baseline', choices=['baseline', 'usestate'])
     parser.add_argument("--min-duration", type=int, default=250)
+    parser.add_argument("--min-duration-TP", action='store_true', default=False)
     parser.add_argument("--n-trials", type=int, default=100)
     parser.add_argument("--show-progress", action='store_true', default=False)
     parser.add_argument("--kwargs", nargs='*', default=[])
@@ -66,6 +67,7 @@ if __name__ == '__main__':
         'method': args.method,
         'job_id': os.environ.get('SLURM_JOB_ID', None),
         'group_name': args.name,
+        'dataset': args.positions_dataset,
     })
     wandb_cb = WeightsAndBiasesCallback(list(objectives.keys()), wandb_kwargs=wandb_kwargs, as_multirun=True)
 
@@ -83,6 +85,7 @@ if __name__ == '__main__':
         # Record parameters
         trial.set_user_attr('method', args.method)
         trial.set_user_attr('job_id', os.environ.get('SLURM_JOB_ID', None))
+        trial.set_user_attr('dataset', args.positions_dataset)
         for key, value in kwargs.items():
             trial.set_user_attr(key, value)
             wandb.config[key] = value
@@ -92,7 +95,7 @@ if __name__ == '__main__':
         dds = TransformedDataset(dds, [SelectBall('ballseg')])
         gen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
         sw = TrajectoryDetector(fitter_types, **kwargs)
-        compare = ComputeSampleMetrics(min_duration=args.min_duration)
+        compare = ComputeSampleMetrics(min_duration=args.min_duration, min_duration_TP=args.min_duration_TP)
         for sample in compare(sw(gen)):
             pass
 
