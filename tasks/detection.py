@@ -201,6 +201,7 @@ class ComputeTopK(ChunkProcessor):
         topk_values, topk_indices = tf.math.top_k(flatten_hitmap, k=self.k, sorted=True)
 
         chunk["topk_outputs"] = topk_values # B, C, K
+        #                                          y         ,          x
         chunk["topk_indices"] = tf.stack(((topk_indices // W), (topk_indices % W)), -1) # B, C, K, D
 
 class ComputeKeypointsTopKDetectionMetrics(ChunkProcessor):
@@ -254,15 +255,19 @@ class DetectBalls():
                 y, x = np.array(result['topk_indices'][camera_idx, 0, 0, i])
                 value = result['topk_outputs'][camera_idx, 0, 0, i].numpy()
                 if value > self.detection_threshold:
+                    calib = instant.calibs[camera_idx]
+                    point = Point2D(x, y)
                     ball = Ball({
                         "origin": self.name,
-                        "center": instant.calibs[camera_idx].project_2D_to_3D(Point2D(x, y), Z=0),
+                        "center": calib.project_2D_to_3D(point, Z=0),
                         "image": camera_idx,
                         "visible": True, # visible enough to have been detected by a detector
                         "value": value,
                         "state": getattr(instant, "ball_state", BallState.NONE),
                     })
-                    ball.point = Point2D(x, y) # required to extract pseudo-annotations
+                    if not calib.projects_in(ball.center):
+                        continue # sanity check for detections that project behind the camera
+                    ball.point = point # required to extract pseudo-annotations
                     yield ball
 
     def __call__(self, instant_key, instant):
