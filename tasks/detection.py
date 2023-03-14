@@ -355,16 +355,18 @@ class ImportDetectionsTransform(Transform):
         annotations = [a for a in instant.annotations if isinstance(a, Ball)]
         instant.ball = None
         if annotations:
+            assert len(annotations) == 1
             instant.ball = annotations[0]
         elif self.estimate_pseudo_annotation and len(detections) > 1:
             pseudo_annotation = self.extract_pseudo_annotation(detections, getattr(instant, "ball_state", BallState.NONE))
             if pseudo_annotation is not None:
                 instant.annotations.extend([pseudo_annotation])
+                annotations = [pseudo_annotation]
                 instant.ball = pseudo_annotation
 
         # Remove true positives
         instant.detections = getattr(instant, "detections", [])
-        annotated_balls = [a.center for a in instant.annotations if a.type == 'ball']
+        annotated_balls = [a.center for a in annotations]
         if self.remove_true_positives and len(annotated_balls) > 0:
             annotations = Point3D(annotated_balls)
             cond = lambda d: np.any(np.linalg.norm(d.point - instant.calibs[d.camera].project_3D_to_2D(annotations)) > self.proximity_threshold)
