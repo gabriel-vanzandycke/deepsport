@@ -357,9 +357,7 @@ class InstantRenderer():
                 for model in getattr(sample, "models", []):
                     self.draw_model(pd, image, model, color=(255, 0, 20), label=model.message)
                 if model := getattr(ball, "model", None):
-                    #self.draw_model(pd, image, model.initial_guess, color=(0, 255, 20), label="Initial guess")
-                    #color = (250, 195, 0) if isinstance(model.mark, ModelMarkAccepted) else (250, 20, 30)
-                    self.draw_model(pd, image, model, color=(250, 195, 0), label="")#getattr(model.mark, "reason", "Other"))
+                    self.draw_model(pd, image, model, color=(250, 195, 0), label="")
                 color = (150, 150, 150) if hasattr(ball, 'model') else ((255, 0, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255))
                 label = f"{ball.value:0.2f} - {str(ball.state)}" if ball.value else f"{str(ball.state)}"
                 self.draw_ball(pd, image, ball, color=color, label=label)
@@ -390,7 +388,6 @@ class SelectBall:
     def __call__(self, key, item):
         try:
             item.ball = max([d for d in item.ball_detections if d.origin == self.origin], key=lambda d: d.value)
-            #item.ball.timestamp = item.timestamps[item.ball.camera]
             item.timestamp = item.timestamps[item.ball.camera]
             item.calib = item.calibs[item.ball.camera]
         except ValueError:
@@ -415,7 +412,6 @@ class BallViewRandomCropperTransformCompat():
             return self.scale_cropper_transform(view_key, view)
         else:
             return self.size_cropper_transform(view_key, view)
-
 
 class BallStateAndBallSizeExperiment(BallStateClassification):
     batch_inputs_names = ["batch_input_image", "batch_input_image2",
