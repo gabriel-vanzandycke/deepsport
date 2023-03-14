@@ -6,9 +6,11 @@ import cv2
 import numpy as np
 
 from deepsport_utilities.court import BALL_DIAMETER
-from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState
+from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, BallViewRandomCropperTransform
 from deepsport_utilities.dataset import Subset
-
+from deepsport_utilities.transforms import Transform
+from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantKey
+from tasks.ballstate import BallStateClassification
 from models.ballistic import FITTED_BALL_ORIGIN
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
@@ -396,36 +398,42 @@ class SelectBall:
         item.models = []
         return item
 
+class AddBallOriginFactory(Transform):
+    def __call__(self, view_key, view):
+        return {'ball_origin': view.ball.origin}
 
-class BallStateAndBallSizeExperiment():
+
+class BallViewRandomCropperTransformCompat():
+    def __init__(self, *args, size_min=None, size_max=None, scale_min=None, scale_max=None, **kwargs):
+        self.size_cropper_transform = BallViewRandomCropperTransform(
+            *args, size_min=size_min, size_max=size_max, **kwargs)
+        self.scale_cropper_transform = BallViewRandomCropperTransform(
+            *args, scale_min=scale_min, scale_max=scale_max, **kwargs)
+    def __call__(self, view_key, view):
+        trusted_origins = ['annotation', 'interpolation']
+        if isinstance(view_key[0], SequenceInstantKey) or view.ball.origin not in trusted_origins:
+            return self.scale_cropper_transform(view_key, view)
+        else:
+            return self.size_cropper_transform(view_key, view)
+
+
+class BallStateAndBallSizeExperiment(BallStateClassification):
     batch_inputs_names = ["batch_input_image", "batch_input_image2",
                           "batch_is_ball", "batch_ball_size", "batch_ball_state"]
     batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "predicted_state",
                            "regression_loss", "classification_loss", "state_loss"]
     batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state"]
 
-    @staticmethod
-    def balanced_keys_generator(keys, get_class, classes, cache, query_item):
-        pending = {c: [] for c in classes}
-        for key in keys:
-            c = cache.get(key) or cache.setdefault(key, get_class(key, query_item(key)))
-            pending[c].append(key)
-            if all([len(l) > 0 for l in pending.values()]):
-                for c in classes:
-                    yield pending[c].pop(0)
-
-    class_cache = {}
-    def auiebatch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
-        raise NotImplementedError("adapt for size and is ball")
+    def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
         if subset.name == "ballistic":
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
             batch_size = batch_size or self.batch_size
-            classes = self.cfg['classes']
-            #classes = [BallState.FLYING, BallState.CONSTRAINT, BallState.DRIBBLING]
-            get_class = lambda k,v: v['ball_state']
-            keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
+            classes = [str(c) for c in self.cfg['classes'] if c != BallState.NONE]
+            classes.extend(['ball_'+origin for origin in ['annotation', 'interpolation']])
+            get_class = lambda k,v: v['ball_state'] or 'noball' if v['is_ball'] == 0 else 'ball_'+v['ball_origin']
+            keys_gen = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
             # yields pairs of (keys, data)
-            yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
+            yield from subset.batches(keys=keys_gen, batch_size=batch_size, *args, **kwargs)
 
 
