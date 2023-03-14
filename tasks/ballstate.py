@@ -7,6 +7,7 @@ from experimentator import ExperimentMode, ChunkProcessor, Subset
 from experimentator.tf2_experiment import TensorflowExperiment
 from deepsport_utilities.transforms import Transform
 from dataset_utilities.ds.raw_sequences_dataset import BallState
+from deepsport_utilities.ds.instants_dataset import Ball
 
 
 class BallStateClassification(TensorflowExperiment):
@@ -43,11 +44,14 @@ class AddIsBallTargetFactory(Transform):
         self.unconfident_margin = unconfident_margin
     def __call__(self, view_key, view):
         ball = view.ball
-        if ball.origin in ['annotation', 'interpolation']:
+        trusted_origins = ['annotation', 'interpolation']
+        if ball.origin in trusted_origins:
             return {"is_ball": 1}
         elif 'pseudo-annotation' in ball.origin:
             return {"is_ball": 1 - self.unconfident_margin}
         elif 'random' in ball.origin:
+            return {"is_ball": 0}
+        elif len([a for a in view.annotations if isinstance(a, Ball) and a.origin in trusted_origins]) > 0:
             return {"is_ball": 0}
         else:
             return {'is_ball': 0 + self.unconfident_margin}
