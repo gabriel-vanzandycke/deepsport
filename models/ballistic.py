@@ -87,7 +87,7 @@ class Fitter3D:
             return None
 
         model = BallisticModel(initial_guess, T0)
-        model.window = window
+        model.window = Window([window[i] for i in window.indices], popped=window.popped + window.indices[0])
         return model
 
 @dataclass
@@ -190,7 +190,7 @@ class Fitter2D(Fitter3D):
             return None
 
         model = BallisticModel(result['x'], T0)
-        model.window = window
+        model.window = Window([window[i] for i in window.indices], popped=window.popped + window.indices[0])
         return model
 
 
@@ -232,11 +232,13 @@ class FilteredFitter2D(Fitter2D):
         if sum(inliers_mask) < self.min_inliers:
             model.message = "too few inliers"
             self.display and print(model.message, flush=True)
+            model.window[0].models.append(model)
             return None
 
         if sum(inliers_mask[0:self.first_inlier]) == 0:
             model.message = f"{self.first_inlier} first samples are not inliers"
             self.display and print(model.message, flush=True)
+            model.window[0].models.append(model)
             return None
 
         model_indices = np.arange(np.min(np.where(inliers_mask)), np.max(np.where(inliers_mask))+1)
@@ -246,6 +248,7 @@ class FilteredFitter2D(Fitter2D):
         if outliers_ratio > self.max_outliers_ratio:
             model.message = "too many outliers"
             self.display and print(model.message, flush=True)
+            model.window[0].models.append(model)
             return None
 
         model.message = "proposed"
