@@ -56,12 +56,12 @@ class ComputeDiameterError(Callback):
     when = ExperimentMode.EVAL
     def on_cycle_begin(self, **_):
         self.acc = defaultdict(lambda: [])
-    def on_batch_end(self, predicted_diameter, batch_ball_size, batch_ball, batch_calib, **_):
-        for target, output, ball, calib in zip(batch_ball_size, predicted_diameter, batch_ball, batch_calib):
+    def on_batch_end(self, predicted_diameter, batch_ball_size, batch_ball_position, batch_calib, **_):
+        for target, output, ball_position, calib in zip(batch_ball_size, predicted_diameter, batch_ball_position, batch_calib):
             if np.isnan(target):
                 continue
 
-            ball = Point3D(ball)
+            ball = Point3D(ball_position)
             diameter_error = output - target
             projection_error = compute_projection_error(calib, ball, diameter_error)[0]
             relative_error = compute_relative_error(calib, ball, output)
@@ -88,12 +88,10 @@ class ComputeDetectionMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
     thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
-    def init(self, exp):
-        self.k = exp.cfg.get('k', 1)
     def on_cycle_begin(self, **_):
         self.acc = {"TP": 0, "FP": 0, "TN": 0, "FN": 0, "P": 0, "N": 0}
-    def on_batch_end(self, target_is_ball, predicted_is_ball, batch_ball, batch_has_ball=None, **_):
-        balls, inverse = np.unique(np.array(batch_ball), axis=0, return_inverse=True)
+    def on_batch_end(self, target_is_ball, predicted_is_ball, batch_ball_position, batch_has_ball=None, **_):
+        balls, inverse = np.unique(np.array(batch_ball_position), axis=0, return_inverse=True)
         for index, _ in enumerate(balls):
             indices = np.where(inverse==index)[0]
 
