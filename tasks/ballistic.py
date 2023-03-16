@@ -416,6 +416,15 @@ class AddBallOriginFactory(Transform):
         return {'ball_origin': view.ball.origin}
 
 
+class AddBallSizeFactory(Transform):
+    def __call__(self, view_key, view):
+        ball = view.ball
+        #                        (          either ball is an annotation           or  ball annotation transferred from true ball)
+        predicate = lambda ball: ( ball.origin in ['annotation', 'interpolation']  or             ball.center.z < -10            ) \
+            and ball.visible is not False and view.calib.projects_in(ball.center)
+        return {"ball_size": view.calib.compute_length2D(ball.center, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
+
+
 class AddIsBallTargetFactory(Transform):
     def __init__(self, unconfident_margin=.1, proximity_threshold=10):
         self.unconfident_margin = unconfident_margin

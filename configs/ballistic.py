@@ -55,8 +55,8 @@ dataset = mlwf.TransformedDataset(dataset, [
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(),
+        tasks.ballistic.AddBallSizeFactory(),
         tasks.ballistic.AddBallOriginFactory(),
         tasks.ballstate.AddIsBallTargetFactory(unconfident_margin=unconfident_margin),
     )
