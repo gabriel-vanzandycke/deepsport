@@ -291,12 +291,13 @@ class DetectBalls():
 class ImportDetectionsTransform(Transform):
     def __init__(self, dataset_folder, proximity_threshold=15, new_version=True,
                  estimate_pseudo_annotation=True, remove_true_positives=True,
-                 remove_duplicates=False):
+                 remove_duplicates=False, transfer_true_position=False):
         self.database_path = os.path.join(dataset_folder, BALL_DETECTIONS_DATABASE_PATH if new_version else BALL_DETECTIONS_DATABASE_PATH_OLD)
         self.proximity_threshold = proximity_threshold # pixels
         self.remove_true_positives = remove_true_positives
         self.remove_duplicates = remove_duplicates
         self.estimate_pseudo_annotation = estimate_pseudo_annotation
+        self.transfer_true_position = transfer_true_position
         self.new_version = new_version
         self.database = {}
 
@@ -333,6 +334,12 @@ class ImportDetectionsTransform(Transform):
                 kept_detections.append(d)
         return kept_detections
 
+    def set_true_position(self, calibs, detections, ball):
+        for d in detections:
+            projected = lambda ball: calibs[d.camera].project_3D_to_2D(ball.center)
+            if np.linalg.norm(projected(d) - projected(ball)) < self.proximity_threshold:
+                d.center = ball.center
+
     def __call__(self, instant_key, instant):
         # Load database
         key = (instant_key.arena_label, instant_key.game_id)
@@ -362,6 +369,8 @@ class ImportDetectionsTransform(Transform):
         if annotations:
             assert len(annotations) == 1
             instant.ball = annotations[0]
+            if self.transfer_true_position:
+                self.set_true_position(instant.calibs, detections, instant.ball)
         elif self.estimate_pseudo_annotation and len(detections) > 1:
             pseudo_annotation = self.extract_pseudo_annotation(detections, getattr(instant, "ball_state", BallState.NONE))
             if pseudo_annotation is not None:
@@ -370,17 +379,14 @@ class ImportDetectionsTransform(Transform):
                 instant.ball = pseudo_annotation
 
         # Remove true positives
-        instant.detections = getattr(instant, "detections", [])
-        annotated_balls = [a.center for a in annotations]
-        if self.remove_true_positives and len(annotated_balls) > 0:
-            annotations = Point3D(annotated_balls)
-            cond = lambda d: np.any(np.linalg.norm(d.point - instant.calibs[d.camera].project_3D_to_2D(annotations)) > self.proximity_threshold)
-        else:
-            cond = lambda d: True
-        instant.detections.extend(filter(cond, detections))
+        if self.remove_true_positives and instant.ball:
+            cond = lambda detection: np.linalg.norm(detection.point - instant.calibs[detection.camera].project_3D_to_2D(instant.ball)) > self.proximity_threshold
+            detections = filter(cond, detections)
 
         # Remove duplicates
-        if self.remove_duplicates and instant.detections:
-            instant.detections = self.keep_unique_detections(instant.calibs, instant.detections)
+        if self.remove_duplicates and detections:
+            detections = self.keep_unique_detections(instant.calibs, detections)
 
+        instant.detections = getattr(instant, "detections", [])
+        instant.detections.extend(detections)
         return instant
