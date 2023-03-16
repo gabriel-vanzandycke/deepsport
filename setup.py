@@ -9,7 +9,7 @@ setup(
     licence="LGPL",
     python_requires='>=3.8',
     description="Software made public for my PhD addressing ball detection and ball 3D localization",
-    version='1.4.0',
+    version='1.5.0',
     packages=find_packages(),
     install_requires=[
         "mlworkflow>=0.3.6",
@@ -17,7 +17,7 @@ setup(
         "numpy",
         "calib3d>=2.8.1",
         "pandas",
-        "deepsport-utilities>=4.6.0",
+        "deepsport-utilities>=4.8.0",
         "tensorflow",
         "python-dotenv",
         "scikit-learn",
