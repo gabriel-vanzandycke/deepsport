@@ -1,17 +1,33 @@
+from collections import defaultdict
 from dataclasses import dataclass
+import typing
 import warnings
 
 from calib3d import Point3D, ProjectiveDrawer
 import cv2
 import numpy as np
+import pandas
+
+from experimentator.callbacked_experiment import Callback
 
 from deepsport_utilities.court import BALL_DIAMETER
-from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, BallViewRandomCropperTransform
-from deepsport_utilities.dataset import Subset
+from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, BallViewRandomCropperTransform, Ball, ViewKey, View
+from deepsport_utilities.dataset import Subset, SubsetType
 from deepsport_utilities.transforms import Transform
 from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantKey
 from tasks.ballstate import BallStateClassification
 from models.ballistic import FITTED_BALL_ORIGIN
+from tasks.detection import divide
+
+
+from experimentator.tf2_chunk_processors import ChunkProcessor
+import tensorflow as tf
+from experimentator import ExperimentMode
+from experimentator.tf2_experiment import TensorflowExperiment
+
+
+from tasks.classification import ComputeClassifactionMetrics as _ComputeClassifactionMetrics, ComputeConfusionMatrix as _ComputeConfusionMatrix
+
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
 
@@ -400,6 +416,31 @@ class AddBallOriginFactory(Transform):
         return {'ball_origin': view.ball.origin}
 
 
+class AddIsBallTargetFactory(Transform):
+    def __init__(self, unconfident_margin=.1, proximity_threshold=10):
+        self.unconfident_margin = unconfident_margin
+        self.proximity_threshold = proximity_threshold
+    def __call__(self, view_key: ViewKey, view: View):
+        ball = view.ball
+        trusted_origins = ['annotation', 'interpolation']
+        if ball.origin in trusted_origins:
+            return {"is_ball": 1}
+        if 'random' in ball.origin:
+            return {"is_ball": 0}
+        annotated_balls = [a for a in view.annotations if isinstance(a, Ball) and a.origin in trusted_origins]
+        annotated_ball = annotated_balls[0] if len(annotated_balls) == 1 else None
+        if annotated_ball:
+            projected = lambda ball: view.calib.project_3D_to_2D(ball.center)
+            if np.linalg.norm(projected(ball) - projected(annotated_ball)) < self.proximity_threshold:
+                return {"is_ball": 1}
+            else:
+                return {"is_ball": 0}
+        elif 'pseudo-annotation' in ball.origin:
+            return {"is_ball": 1 - self.unconfident_margin}
+        else:
+            return {'is_ball': 0 + self.unconfident_margin}
+
+
 class BallViewRandomCropperTransformCompat():
     def __init__(self, *args, size_min=None, size_max=None, scale_min=None, scale_max=None, **kwargs):
         self.size_cropper_transform = BallViewRandomCropperTransform(
@@ -413,23 +454,109 @@ class BallViewRandomCropperTransformCompat():
         else:
             return self.size_cropper_transform(view_key, view)
 
-class BallStateAndBallSizeExperiment(BallStateClassification):
+class BallStateAndBallSizeExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_input_image", "batch_input_image2",
                           "batch_is_ball", "batch_ball_size", "batch_ball_state"]
     batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "predicted_state",
                            "regression_loss", "classification_loss", "state_loss"]
     batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state"]
 
+    class_cache = {}
     def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
-        if subset.name == "ballistic":
+        if subset.type == SubsetType.EVAL:
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
             batch_size = batch_size or self.batch_size
             classes = [str(c) for c in self.cfg['classes'] if c != BallState.NONE]
-            classes.extend(['ball_'+origin for origin in ['annotation', 'interpolation']])
-            get_class = lambda k,v: v['ball_state'] or 'noball' if v['is_ball'] == 0 else 'ball_'+v['ball_origin']
-            keys_gen = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
+            classes.extend(['ball_annotation', 'ball_interpolation', 'noball', 'other'])
+            trusted_origins = ['annotation', 'interpolation']
+            def get_class(k,v):
+                if v['ball_origin'] in trusted_origins:
+                    return 'ball_' + v['ball_origin']
+                if v['ball_state'] != BallState.NONE:
+                    return str(v['ball_state'])
+                if v['is_ball'] == 0:
+                    return 'noball'
+                return 'other'
+            keys_gen = BallStateClassification.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
             # yields pairs of (keys, data)
             yield from subset.batches(keys=keys_gen, batch_size=batch_size, *args, **kwargs)
 
+class ComputeClassifactionMetrics(_ComputeClassifactionMetrics):
+    def on_batch_end(self, predicted_state, batch_ball_state, **_):
+        B, C = predicted_state.shape
+        onehot_true_state = tf.one_hot(batch_ball_state, C)
+        super().on_batch_end(predicted_state, onehot_true_state, **_)
+
+class ComputeConfusionMatrix(_ComputeConfusionMatrix):
+    def on_batch_end(self, predicted_state, batch_ball_state, **_):
+        B, C = predicted_state.shape
+        onehot_true_state = tf.one_hot(batch_ball_state, C)
+        super().on_batch_end(predicted_state, onehot_true_state, **_)
+
+
+class NamedOutputs(ChunkProcessor):
+    def __call__(self, chunk):
+        chunk["predicted_diameter"] = chunk["batch_logits"][...,0]
+        chunk["predicted_is_ball"] = chunk["batch_logits"][...,1]
+        chunk["predicted_state"] = chunk["batch_logits"][...,2:]
+
+
+class ClassificationLoss(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
+    def __call__(self, chunk):
+        # TODO: check if binary crossentropy fits the unconfident targets
+        chunk["classification_loss"] = tf.keras.losses.binary_crossentropy(chunk["batch_is_ball"], chunk["predicted_is_ball"], from_logits=True)
+
+
+@dataclass
+class ComputeDetectionMetrics(Callback):
+    origins: typing.List[str]
+    before = ["AuC", "GatherCycleMetrics"]
+    when = ExperimentMode.EVAL
+    thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
+    def on_cycle_begin(self, **_):
+        self.acc = defaultdict(list)
+    def on_batch_end(self, keys, batch_ball, batch_is_ball, predicted_is_ball, **_):
+        for view_key, ball, target, predicted in zip(keys, batch_ball, batch_is_ball, predicted_is_ball):
+            if target in [0, 1]:
+                key = (view_key.instant_key, view_key.camera)
+                self.acc[key].append((ball, target, predicted))
+    def on_cycle_end(self, state, **_):
+        for name in ['top1_metrics', 'initial_top1_metrics']:
+            TP = np.zeros((len(self.thresholds), ))
+            FP = np.zeros((len(self.thresholds), ))
+            P = N = 0
+            for key, zipped in self.acc.items():
+                balls, target_is_ball, predicted_is_ball = zip(*zipped)
+                print("target_is_ball", target_is_ball)
+                print("predicted_is_ball", predicted_is_ball)
+                print("origins", [b.origin for b in balls])
+                for origin in self.origins:
+                    indices = [i for i, b in enumerate(balls) if b.origin == origin]
+                    if indices:
+                        if name == 'initial_top1_metrics':
+                            values = [b.value for i, b in enumerate(balls) if i in indices]
+                        elif name == 'top1_metrics':
+                            values = np.array(predicted_is_ball)[indices]
+                        index = np.argmax(values)
+                        output = (values[index] > self.thresholds).astype(np.uint8) # value = 0.1 => output = [1, 1, 1, 0, 0, 0, ..., 0]
+                        target = target_is_ball[indices[index]]
+                        TP +=   target   *   output
+                        FP += (1-target) *   output
+
+                    has_ball = np.any(target_is_ball)
+                    P  +=   has_ball
+                    N  += 1 - has_ball
+
+            P = np.array(P)[np.newaxis]
+            N = np.array(N)[np.newaxis]
+            data = {
+                "thresholds": self.thresholds,
+                "FP rate": divide(FP, P + N),  # #-possible cases is the number of images
+                "TP rate": divide(TP, P),      # #-possible cases is the number of images on which there's a ball to detect
+                "precision": divide(TP, TP + FP),
+                "recall": divide(TP, P),
+                }
+            state[name] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
 
