@@ -1,13 +1,13 @@
+from collections import defaultdict
 from typing import NamedTuple
 
+import numpy as np
 from calib3d import Point2D
 import tensorflow as tf
 
 from experimentator import ExperimentMode, ChunkProcessor, Subset
 from experimentator.tf2_experiment import TensorflowExperiment
-from deepsport_utilities.transforms import Transform
 from dataset_utilities.ds.raw_sequences_dataset import BallState
-from deepsport_utilities.ds.instants_dataset import Ball
 
 
 class BallStateClassification(TensorflowExperiment):
@@ -17,11 +17,14 @@ class BallStateClassification(TensorflowExperiment):
 
     @staticmethod
     def balanced_keys_generator(keys, get_class, classes, cache, query_item):
-        pending = {c: [] for c in classes}
+        pending = defaultdict(list)
         for key in keys:
-            c = cache.get(key) or cache.setdefault(key, get_class(key, query_item(key)))
+            try:
+                c = cache.get(key) or cache.setdefault(key, get_class(key, query_item(key)))
+            except KeyError:
+                continue
             pending[c].append(key)
-            if all([len(l) > 0 for l in pending.values()]):
+            if all([len(pending[c]) > 0 for c in classes]):
                 for c in classes:
                     yield pending[c].pop(0)
 
@@ -37,24 +40,6 @@ class BallStateClassification(TensorflowExperiment):
             keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
             # yields pairs of (keys, data)
             yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
-
-
-class AddIsBallTargetFactory(Transform):
-    def __init__(self, unconfident_margin=.1):
-        self.unconfident_margin = unconfident_margin
-    def __call__(self, view_key, view):
-        ball = view.ball
-        trusted_origins = ['annotation', 'interpolation']
-        if ball.origin in trusted_origins:
-            return {"is_ball": 1}
-        elif 'pseudo-annotation' in ball.origin:
-            return {"is_ball": 1 - self.unconfident_margin}
-        elif 'random' in ball.origin:
-            return {"is_ball": 0}
-        elif len([a for a in view.annotations if isinstance(a, Ball) and a.origin in trusted_origins]) > 0:
-            return {"is_ball": 0}
-        else:
-            return {'is_ball': 0 + self.unconfident_margin}
 
 
 class ChannelsReductionLayer(ChunkProcessor):
@@ -82,13 +67,6 @@ class ChannelsReductionLayer(ChunkProcessor):
         chunk['batch_input'] = self.layers(chunk['batch_input'])
 
 
-
-class NamedOutputs(ChunkProcessor):
-    def __call__(self, chunk):
-        chunk["predicted_diameter"] = chunk["batch_logits"][...,0]
-        chunk["predicted_is_ball"] = chunk["batch_logits"][...,1]
-        chunk["predicted_state"] = chunk["batch_logits"][...,2:]
-
 class StateClassificationLoss(ChunkProcessor):
     def __init__(self, classes):
         self.classes = classes
@@ -97,12 +75,14 @@ class StateClassificationLoss(ChunkProcessor):
         loss = tf.keras.losses.binary_crossentropy(batch_target, chunk["predicted_state"], from_logits=True)
         chunk["state_loss"] = tf.reduce_mean(loss)
 
+
 class CombineLosses(ChunkProcessor):
     def __init__(self, names, weights):
         self.weights = weights
         self.names = names
     def __call__(self, chunk):
         chunk["loss"] = tf.reduce_sum([chunk[name]*w for name, w in zip(self.names, self.weights)])
+
 
 class BallDetection(NamedTuple): # for retro-compatibility
     model: str
