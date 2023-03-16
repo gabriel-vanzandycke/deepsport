@@ -23,73 +23,51 @@ experiment_type = [
 ]
 
 batch_size = 16
+#testing_arena_labels = ["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-GRAVELINES", "KS-FR-STRASBOURG"]
+testing_arena_labels = ['KS-FR-LEMANS', 'KS-FR-MONACO', 'KS-FR-STRASBOURG', 'KS-FR-CAEN', 'KS-FR-LIMOGES', 'KS-FR-BLOIS', 'KS-FR-FOS', 'KS-FR-GRAVELINES', 'KS-FR-STCHAMOND', 'KS-FR-POITIERS']
+dataset_name = 'balls_dataset.pickle'
+
 side_length = 114
 output_shape = (side_length, side_length)
-
-unconfident_margin = .2
-data_extraction = deepsport_utilities.transforms.DataExtractorTransform(
-    deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
-    #deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory(),
-    deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
-    deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
-    deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
-    deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(),
-    tasks.ballstate.AddIsBallTargetFactory(unconfident_margin=unconfident_margin),
-)
-testing_arena_labels = ["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-GRAVELINES", "KS-FR-STRASBOURG"]
-max_shift = 10 # pixels in the ouptut image
-
-
-# InstantsDataset
-#instants_dataset_name = "instants_dataset.pickle"
-#instants_dataset = mlwf.PickledDataset(find(instants_dataset_name))
-#experiment.tasks.ball.BallViewRandomCropperTransform(output_shape=output_shape, def_min=def_min if scaled else 0, def_max=def_max if scaled else 0, on_ball=on_ball, padding=0, margin=100//scale),
-
-
-
-
-# Ball Size estimation dataset
-size_min = 14
-size_max = 45
-ballsize_dataset_name = "ballsize_dataset.pickle"
-ballsize_dataset = mlwf.PickledDataset(find(ballsize_dataset_name))
-ballsize_dataset = mlwf.TransformedDataset(ballsize_dataset, [
-    deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
-        output_shape=output_shape,
-        size_min=size_min,
-        size_max=size_max,
-        margin=side_length//2-max_shift,
-        on_ball=True
-    ), data_extraction
-])
-ballsize_subsets = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(testing_arena_labels)(ballsize_dataset)
-
-
-# Ball State estimation dataset
+size_min = 9
+size_max = 28
 scale_min = 0.75
 scale_max = 1.25
-ballstate_dataset_name = "ballstate_dataset.pickle"
-ballstate_dataset = mlwf.PickledDataset(find(ballstate_dataset_name))
-ballstate_dataset = mlwf.TransformedDataset(ballstate_dataset, [
-    deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
+max_shift = 10 # pixels in the ouptut image
+
+unconfident_margin = .1
+
+dataset = mlwf.PickledDataset(find(dataset_name))
+# transformation should be a function of a scale factor if I want to evaluate on
+# strasbourg and gravelines sequences (in order to evaluate on the scale range trained on)
+dataset = mlwf.TransformedDataset(dataset, [
+    tasks.ballistic.BallViewRandomCropperTransformCompat(
         output_shape=output_shape,
         scale_min=scale_min,
         scale_max=scale_max,
-        margin=side_length//2-max_shift,
-        on_ball=True
-    ), data_extraction
+        size_min=size_min,
+        size_max=size_max,
+        margin=side_length//2-max_shift
+    ),
+    deepsport_utilities.transforms.DataExtractorTransform(
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(),
+        tasks.ballistic.AddBallOriginFactory(),
+        tasks.ballstate.AddIsBallTargetFactory(unconfident_margin=unconfident_margin),
+    )
 ])
-ballstate_subsets = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(testing_arena_labels)(ballstate_dataset)
 
-# Combine subsets
-subsets = [
-    experimentator.CombinedSubset('training', ballsize_subsets[0], ballstate_subsets[0]),
-    experimentator.CombinedSubset('validation', ballsize_subsets[1], ballstate_subsets[1]),
-    experimentator.CombinedSubset('testing', ballsize_subsets[2], ballstate_subsets[2]),
-]
+subsets = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(testing_arena_labels)(dataset)
 
-globals().update(locals()) # required to use tf in lambdas or simply 'BallState'
-classes = [BallState(i) for i in range(4)]
+
+#raise
+globals().update(locals()) # required to use tf in lambdas or simply 'BallState' in list
+classes = [BallState.NONE, BallState.FLYING, BallState.CONSTRAINT, BallState.DRIBBLING]
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
     experimentator.SaveWeights(),
@@ -98,10 +76,10 @@ callbacks = [
     experimentator.LogStateDataCollector(),
     experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
     #experimentator.LearningRateWarmUp(),
-    tasks.classification.ComputeClassifactionMetrics(),
-    tasks.classification.ComputeConfusionMatrix(classes=classes),
+    tasks.ballistic.ComputeClassifactionMetrics(),
+    tasks.ballistic.ComputeConfusionMatrix(classes=classes),
     tasks.ballsize.ComputeDiameterError(),
-    tasks.ballsize.ComputeDetectionMetrics(),
+    tasks.ballistic.ComputeDetectionMetrics(origins=['pifball', 'ballseg']),
     tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
     tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(2)), class_index=2),
     experimentator.wandb_experiment.LogStateWandB(),
@@ -132,9 +110,10 @@ chunk_processors = [
     projector_network,
     backbone_model,
     models.other.LeNetHead(output_features=2+len(classes)), # Diameter Regression + Has Ball Classification + Ball State Classification
-    tasks.ballstate.NamedOutputs(),
-    tasks.ballsize.ClassificationLoss(),
+    tasks.ballistic.NamedOutputs(),
+    tasks.ballistic.ClassificationLoss(),
     tasks.ballsize.RegressionLoss(),
+    tasks.ballstate.StateClassificationLoss(classes),
     tasks.ballstate.CombineLosses(["classification_loss", "regression_loss", "state_loss"], alpha),
     lambda chunk: chunk.update({"predicted_is_ball": tf.nn.sigmoid(chunk["predicted_is_ball"])}), # squash in [0,1]
 ]
