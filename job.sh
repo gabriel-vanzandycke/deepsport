@@ -11,6 +11,7 @@ REMAINING_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --file)
+            echo "Copying '$2' from global scratch to local scratch"
             cp "$GLOBALSCRATCH/$2" "$LOCALSCRATCH/$2"
             shift # past argument
             shift # past value
