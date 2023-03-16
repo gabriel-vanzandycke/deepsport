@@ -7,6 +7,7 @@ import deepsport_utilities.ds.instants_dataset
 import tasks.ballsize
 import models.other
 import models.tensorflow
+import experimentator.wandb_experiment
 
 experiment_type = [
     experimentator.AsyncExperiment,
@@ -43,10 +44,13 @@ transforms = [
 ]
 
 dataset_splitter = "arenas_specific"
-dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
+testing_arena_labels = ["KS-FR-ROANNE", "KS-FR-LILLE"]
+validation_pc = 0
+
+dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms) # CachedDataset fails for whatever reason
 subsets = {
     "deepsport": deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip"),
-    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(["KS-FR-ROANNE", "KS-FR-LILLE"]),
+    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(testing_arena_labels, validation_pc=validation_pc),
 }[dataset_splitter](dataset)
 
 callbacks = [
@@ -55,10 +59,10 @@ callbacks = [
     experimentator.SaveLearningRate(),
     experimentator.GatherCycleMetrics(),
     experimentator.LogStateDataCollector(),
+    experimentator.wandb_experiment.LogStateWandB(),
     experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
     tasks.ballsize.ComputeDiameterError(),
     tasks.ballsize.ComputeDetectionMetrics(),
-    tasks.ballsize.PrintMetricsCallback(['training_MADE', 'validation_MADE']),
 ]
 
 alpha = 0.5
