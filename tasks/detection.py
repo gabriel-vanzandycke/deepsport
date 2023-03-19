@@ -226,17 +226,16 @@ class EnlargeTarget(ChunkProcessor):
         chunk["batch_target"] = tf.nn.max_pool2d(chunk["batch_target"][..., tf.newaxis], self.pool_size, strides=1, padding='SAME')
 
 
-BALL_DETECTIONS_DATABASE_PATH = "{}/{}/ball_detections.pickle"
-BALL_DETECTIONS_DATABASE_PATH_OLD = "{}/{}/balls3d.pickle"
 PIFBALL_THRESHOLD = 0.05
 BALLSEG_THRESHOLD = 0.6
 
 
 class DetectBalls():
-    def __init__(self, dataset_folder, name, config, k, detection_threshold):
-        self.database_path = os.path.join(dataset_folder, BALL_DETECTIONS_DATABASE_PATH)
+    def __init__(self, dataset_folder, name, config, k, filename, detection_threshold=0):
+        self.dataset_folder = dataset_folder
         self.detection_threshold = detection_threshold
         self.name = name
+        self.filename = filename
         self.database = {}
         self.model = build_experiment(config, k=k)
 
@@ -271,7 +270,7 @@ class DetectBalls():
                     yield ball
 
     def __call__(self, instant_key, instant):
-        filename = self.database_path.format(instant_key.arena_label, instant_key.game_id)
+        filename = os.path.join(self.dataset_folder, instant_key.arena_label, str(instant_key.game_id), self.filename)
 
         # Load existing database
         database = pickle.load(open(filename, 'rb')) if os.path.isfile(filename) else {}
@@ -289,10 +288,11 @@ class DetectBalls():
 
 
 class ImportDetectionsTransform(Transform):
-    def __init__(self, dataset_folder, proximity_threshold=15, new_version=True,
+    def __init__(self, dataset_folder, filename, proximity_threshold=15,
                  estimate_pseudo_annotation=True, remove_true_positives=True,
                  remove_duplicates=False, transfer_true_position=False):
-        self.database_path = os.path.join(dataset_folder, BALL_DETECTIONS_DATABASE_PATH if new_version else BALL_DETECTIONS_DATABASE_PATH_OLD)
+        self.dataset_folder = dataset_folder
+        self.filename = filename
         self.proximity_threshold = proximity_threshold # pixels
         self.remove_true_positives = remove_true_positives
         self.remove_duplicates = remove_duplicates
@@ -344,10 +344,9 @@ class ImportDetectionsTransform(Transform):
         # Load database
         key = (instant_key.arena_label, instant_key.game_id)
         if key not in self.database:
-            self.database[key] = pickle.load(open(self.database_path.format(*key), "rb"))
-        if self.new_version:
-            detections = self.database[key].get(instant_key.timestamp, [])
-        else:
+            filename = self.database_path = os.path.join(self.dataset_folder, instant_key.arena_label, str(instant_key.game_id), self.filename)
+            self.database[key] = pickle.load(open(filename, "rb"))
+        if self.filename == "balls3d.pickle": # OLD VERSION
             detections = self.database[key].get(instant.frame_indices[0], [])
             def unpack(detection):
                 point = Point2D(detection.point.y, detection.point.x) # y, x were inverted in the old version
@@ -362,6 +361,8 @@ class ImportDetectionsTransform(Transform):
                 ball.point = point # required to extract pseudo-annotations
                 return ball
             detections = list(map(unpack, detections))
+        else:
+            detections = self.database[key].get(instant_key.timestamp, [])
 
         # Compute pseudo-annotation from detections
         annotations = [a for a in instant.annotations if isinstance(a, Ball)]
