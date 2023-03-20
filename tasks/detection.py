@@ -86,19 +86,20 @@ class ComputeTopkMetrics(Callback):
                 value = np.sum(state[name], axis=0) # sums the batch dimension
                 self.acc[name] = self.acc.setdefault(name, np.zeros_like(value)) + value
     def on_cycle_end(self, state, **_):
-        for k in self.k:
-            FP = np.sum(self.acc["topk_FP"][self.class_index, :, 0:k], axis=1)
-            TP = np.sum(self.acc["topk_TP"][self.class_index, :, 0:k], axis=1)
-            P = self.acc["P"][np.newaxis]
-            N = self.acc["N"][np.newaxis]
-            data = {
-                "thresholds": self.thresholds,
-                "FP rate": divide(FP, P + N),  # #-possible cases is the number of images
-                "TP rate": divide(TP, P),      # #-possible cases is the number of images on which there's a ball to detect
-                "precision": divide(TP, TP + FP),
-                "recall": divide(TP, P),
-            }
-            state[f"top{k}_metrics"] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
+        if self.acc:
+            for k in self.k:
+                FP = np.sum(self.acc["topk_FP"][self.class_index, :, 0:k], axis=1)
+                TP = np.sum(self.acc["topk_TP"][self.class_index, :, 0:k], axis=1)
+                P = self.acc["P"][np.newaxis]
+                N = self.acc["N"][np.newaxis]
+                data = {
+                    "thresholds": self.thresholds,
+                    "FP rate": divide(FP, P + N),  # #-possible cases is the number of images
+                    "TP rate": divide(TP, P),      # #-possible cases is the number of images on which there's a ball to detect
+                    "precision": divide(TP, TP + FP),
+                    "recall": divide(TP, P),
+                }
+                state[f"top{k}_metrics"] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
 
         # TODO: handle multple classes cases (here only class index is picked and the rest is discarded)
 
@@ -113,11 +114,15 @@ class AuC(Callback):
     y_label: str = "TP rate"
     x_lim: int = 1
     close_curve: bool = True
+
     def on_cycle_end(self, state, **_):
+        if self.table_name not in state:
+            return
+
         x = state[self.table_name][self.x_label][::-1]
         y = state[self.table_name][self.y_label][::-1]
-
         state[self.name] = self(x,y)
+
     def __call__(self, x, y):
         auc = 0
         for xi1, yi1, xi2, yi2 in zip(x, y, x[1:], y[1:]):
@@ -267,6 +272,7 @@ class DetectBalls():
                     if not calib.projects_in(ball.center):
                         continue # sanity check for detections that project behind the camera
                     ball.point = point # required to extract pseudo-annotations
+                    ball.heatmap = result['batch_heatmap'][camera_idx].numpy()
                     yield ball
 
     def __call__(self, instant_key, instant):
@@ -298,7 +304,6 @@ class ImportDetectionsTransform(Transform):
         self.remove_duplicates = remove_duplicates
         self.estimate_pseudo_annotation = estimate_pseudo_annotation
         self.transfer_true_position = transfer_true_position
-        self.new_version = new_version
         self.database = {}
 
     def extract_pseudo_annotation(self, detections: Ball, ball_state=BallState.NONE):

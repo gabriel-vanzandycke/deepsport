@@ -11,7 +11,7 @@ import pandas
 from experimentator.callbacked_experiment import Callback
 
 from deepsport_utilities.court import BALL_DIAMETER
-from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, BallViewRandomCropperTransform, Ball, ViewKey, View
+from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, BallViewRandomCropperTransform, Ball, ViewKey, View, InstantKey
 from deepsport_utilities.dataset import Subset, SubsetType
 from deepsport_utilities.transforms import Transform
 from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantKey
@@ -419,8 +419,8 @@ class AddBallOriginFactory(Transform):
 class AddBallSizeFactory(Transform):
     def __call__(self, view_key, view):
         ball = view.ball
-        #                        (          either ball is an annotation           or  ball annotation transferred from true ball)
-        predicate = lambda ball: ( ball.origin in ['annotation', 'interpolation']  or             ball.center.z < -10            ) \
+        #                        (          either ball is an annotation           or             true ball annotation transferred to detection         )
+        predicate = lambda ball: ( ball.origin in ['annotation', 'interpolation']  or  (ball.origin in ['pifball', 'ballseg'] and ball.center.z < -10)  ) \
             and ball.visible is not False and view.calib.projects_in(ball.center)
         return {"ball_size": view.calib.compute_length2D(ball.center, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
 
@@ -430,21 +430,23 @@ class AddIsBallTargetFactory(Transform):
         self.unconfident_margin = unconfident_margin
         self.proximity_threshold = proximity_threshold
     def __call__(self, view_key: ViewKey, view: View):
-        ball = view.ball
+        ball_origin = view.ball.origin
         trusted_origins = ['annotation', 'interpolation']
-        if ball.origin in trusted_origins:
+        if ball_origin in trusted_origins:
             return {"is_ball": 1}
-        if 'random' in ball.origin:
+        if 'random' == ball_origin:
             return {"is_ball": 0}
+
         annotated_balls = [a for a in view.annotations if isinstance(a, Ball) and a.origin in trusted_origins]
         annotated_ball = annotated_balls[0] if len(annotated_balls) == 1 else None
         if annotated_ball:
             projected = lambda ball: view.calib.project_3D_to_2D(ball.center)
-            if np.linalg.norm(projected(ball) - projected(annotated_ball)) < self.proximity_threshold:
+            if np.linalg.norm(projected(view.ball) - projected(annotated_ball)) < self.proximity_threshold:
                 return {"is_ball": 1}
             else:
                 return {"is_ball": 0}
-        elif 'pseudo-annotation' in ball.origin:
+
+        elif 'pseudo-annotation' in ball_origin:
             return {"is_ball": 1 - self.unconfident_margin}
         else:
             return {'is_ball': 0 + self.unconfident_margin}
@@ -520,43 +522,44 @@ class ClassificationLoss(ChunkProcessor):
 
 @dataclass
 class ComputeDetectionMetrics(Callback):
-    origins: typing.List[str]
+    origin: str = 'ballseg'
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
     thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
     def on_cycle_begin(self, **_):
-        self.acc = defaultdict(list)
+        self.d_acc = defaultdict(list)
+        self.t_acc = defaultdict(bool) # defaults to False
+
     def on_batch_end(self, keys, batch_ball, batch_is_ball, predicted_is_ball, **_):
-        for view_key, ball, target, predicted in zip(keys, batch_ball, batch_is_ball, predicted_is_ball):
-            if target in [0, 1]:
+        for view_key, ball, target_is_ball, predicted in zip(keys, batch_ball, batch_is_ball, predicted_is_ball):
+            if isinstance(view_key.instant_key, InstantKey): # Keep only views from deepsport dataset for evaluation
                 key = (view_key.instant_key, view_key.camera)
-                self.acc[key].append((ball, target, predicted))
+                if ball.origin == self.origin:
+                    self.d_acc[key].append((ball, target_is_ball, predicted))
+                elif ball.origin == 'annotation':
+                    self.t_acc[key] = True
     def on_cycle_end(self, state, **_):
-        for name in ['top1_metrics', 'initial_top1_metrics']:
+        for k in [None, 1, 2, 4]:
             TP = np.zeros((len(self.thresholds), ))
             FP = np.zeros((len(self.thresholds), ))
             P = N = 0
-            for key, zipped in self.acc.items():
+            for key, zipped in self.d_acc.items():
                 balls, target_is_ball, predicted_is_ball = zip(*zipped)
-                print("target_is_ball", target_is_ball)
-                print("predicted_is_ball", predicted_is_ball)
-                print("origins", [b.origin for b in balls])
-                for origin in self.origins:
-                    indices = [i for i, b in enumerate(balls) if b.origin == origin]
-                    if indices:
-                        if name == 'initial_top1_metrics':
-                            values = [b.value for i, b in enumerate(balls) if i in indices]
-                        elif name == 'top1_metrics':
-                            values = np.array(predicted_is_ball)[indices]
-                        index = np.argmax(values)
-                        output = (values[index] > self.thresholds).astype(np.uint8) # value = 0.1 => output = [1, 1, 1, 0, 0, 0, ..., 0]
-                        target = target_is_ball[indices[index]]
-                        TP +=   target   *   output
-                        FP += (1-target) *   output
+                values = [b.value for b in balls]
+                if k is None:
+                    index = np.argmax(values)
+                else:
+                    indices = np.argsort(values)[-min(k,1):]
+                    index = indices[np.argmax(predicted_is_ball[indices])]
+                    values = predicted_is_ball
+                output = (values[index] >= self.thresholds).astype(np.uint8)
+                target = target_is_ball[index]
+                TP +=   target   *  output
+                FP += (1-target) *  output
 
-                    has_ball = np.any(target_is_ball)
-                    P  +=   has_ball
-                    N  += 1 - has_ball
+                has_ball = self.t_acc[key]
+                P  +=   has_ball
+                N  += 1 - has_ball
 
             P = np.array(P)[np.newaxis]
             N = np.array(N)[np.newaxis]
@@ -567,5 +570,6 @@ class ComputeDetectionMetrics(Callback):
                 "precision": divide(TP, TP + FP),
                 "recall": divide(TP, P),
                 }
+            name = f'initial_top{k}_metrics' if k is None else f'top{k}_metrics'
             state[name] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
 
