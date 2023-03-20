@@ -2,6 +2,7 @@
 
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
+#SBATCH --mem=50G
 #SBATCH --gres="gpu:1"
 #SBATCH --partition=gpu
 
@@ -12,7 +13,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --file)
             echo "Copying '$2' from global scratch to local scratch"
-            cp "$GLOBALSCRATCH/$2" "$LOCALSCRATCH/$2"
+            rsync -ah --progress "$GLOBALSCRATCH/$2" "$LOCALSCRATCH/$2"
             shift # past argument
             shift # past value
             ;;
