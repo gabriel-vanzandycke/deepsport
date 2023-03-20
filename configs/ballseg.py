@@ -25,8 +25,8 @@ with_diff = True
 
 # DeepSport Dataset
 dataset_name = "camera_with_ball_visible_views.pickle"
-size_min = 11
-size_max = 28
+size_min = 14
+size_max = 40
 transforms = [
     deepsport_utilities.ds.instants_dataset.views_transforms.BallViewRandomCropperTransform(
         output_shape=output_shape,
@@ -41,17 +41,17 @@ transforms = [
     )
 ]
 
-#dataset_splitter = deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip")
-#dataset_splitter =
 fold = 0
 dataset_splitter_str = "8folds"
+additional_keys_usage="skip"
 dataset_splitter = {
     "8folds": deepsport_utilities.ds.instants_dataset.dataset_splitters.KFoldsArenaLabelsTestingDatasetSplitter(8, 0, 1),
+    "deepsport": deepsport_utilities.ds.instants_dataset.dataset_splitters.DeepSportDatasetSplitter(validation_pc=0, additional_keys_usage=additional_keys_usage),
     "GRAVELINES&STRASBOURG": deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(validation_pc=0, testing_arena_labels=['KS-FR-GRAVELINES', 'KS-FR-STRASBOURG']),
 }[dataset_splitter_str]
 dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
 subsets = dataset_splitter(dataset, fold=fold)
-testing_arena_labels = dataset_splitter.testing_arena_labels
+testing_arena_labels = dataset_splitter.testing_arena_labels # required (but KFoldsArenaLabelsTestingDatasetSplitter and DeepsportDatasetSplitter have this attribute set!)
 
 
 
