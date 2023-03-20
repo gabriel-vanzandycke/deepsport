@@ -25,7 +25,7 @@ Detect ball in Basketball Instants Dataset.""")
 parser.add_argument("detector", help="Detector name (sets ball 'origin' field)")
 parser.add_argument("version",  help="Detector version (sets file on which detection are saved")
 parser.add_argument("--workers", type=int, default=2)
-parser.add_argument("--k", default=4, help="Maximum number of detections to consider")
+parser.add_argument("--k", type=int, default=4, help="Maximum number of detections to consider")
 args = parser.parse_args()
 
 dataset_config = {
@@ -37,7 +37,7 @@ database_file = os.path.join(dataset_config['dataset_folder'], "basketball-insta
 experiment_ids = {
     "ballseg": {
         'full':      ["20230221_210804.236154", "20230221_111901.374475", "20230217_184505.715658", "20230217_140646.069593", "20230221_165826.810944", "20230220_132352.389741", "20230217_184403.495582", "20230217_140644.619392"],
-        'deepsport': ["20230319_110459.058488", "20230319_105837.542983", "20230319_111420.259669", "20230319_111420.259926", "20230319_111420.263308"],
+        'deepsport': ["20230320_114400.066037" ,"20230320_114400.066085" ,"20230320_114036.563804" ,"20230320_114036.563858" ,"20230320_114003.086646" ,"20230320_113834.569108"],
     },
     "pifball": {
         'full': ["20230221_202338.343195", "20230220_202551.530667", "20230220_135417.554986", "20230217_150524.178161", "20230222_035443.776450", "20230221_210246.162130", "20230221_111435.426128", "20230217_150541.149283"],
