@@ -4,10 +4,11 @@ import experimentator
 from experimentator import find
 import experimentator.tf2_experiment
 import deepsport_utilities.ds.instants_dataset
-import tasks.ballsize
 import models.other
 import models.tensorflow
 import experimentator.wandb_experiment
+import tasks.ballsize
+import tasks.detection
 
 experiment_type = [
     experimentator.AsyncExperiment,
@@ -25,7 +26,7 @@ output_shape = (side_length, side_length)
 # DeepSport Dataset
 dataset_name = "ball_views.pickle"
 size_min = 14
-size_max = 45
+size_max = 37
 max_shift = 0
 transforms = [
     deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
@@ -38,20 +39,26 @@ transforms = [
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
+        tasks.ballsize.AddIsBallTargetFactory(),
     )
 ]
 
-dataset_splitter = "arenas_specific"
-testing_arena_labels = ["KS-FR-ROANNE", "KS-FR-LILLE"]
-validation_pc = 0
-
-dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms) # CachedDataset fails for whatever reason
-subsets = {
-    "deepsport": deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage="skip"),
+dataset_splitter_str = 'deepsport'
+validation_pc = 15
+testing_arena_labels = []
+dataset = mlwf.PickledDataset(find(dataset_name))
+globals().update(locals()) # required to use locals() in lambdas
+dataset = mlwf.TransformedDataset(dataset, transforms) # CachedDataset fails for whatever reason
+fold = 0
+dataset_splitter = {
+    "deepsport": deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage='testing2', validation_pc=validation_pc),
     "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(testing_arena_labels, validation_pc=validation_pc),
-}[dataset_splitter](dataset)
+}[dataset_splitter_str]
+subsets = dataset_splitter(dataset, fold)
+testing_arena_labels = dataset_splitter.testing_arena_labels
 
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
@@ -59,10 +66,11 @@ callbacks = [
     experimentator.SaveLearningRate(),
     experimentator.GatherCycleMetrics(),
     experimentator.LogStateDataCollector(),
-    experimentator.wandb_experiment.LogStateWandB(),
     experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
     tasks.ballsize.ComputeDiameterError(),
     tasks.ballsize.ComputeDetectionMetrics(),
+    tasks.detection.AuC("top1-AuC", "top1_metrics"),
+    experimentator.wandb_experiment.LogStateWandB("validation_MAPE", False),
 ]
 
 alpha = 0.5
