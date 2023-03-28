@@ -10,6 +10,8 @@ from calib3d import Calib, Point3D, Point2D
 from experimentator.tf2_chunk_processors import ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator import Callback, ExperimentMode
+from deepsport_utilities.transforms import Transform
+from deepsport_utilities.ds.instants_dataset import ViewKey, View
 
 from .detection import divide
 
@@ -17,8 +19,8 @@ BALL_DIAMETER = 23
 
 
 class BallSizeEstimation(TensorflowExperiment):
-    batch_inputs_names = ["batch_ball_size", "batch_input_image"]
-    batch_metrics_names = ["target_is_ball", "predicted_is_ball", "predicted_diameter", "regression_loss", "classification_loss"]
+    batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image"]
+    batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "regression_loss", "classification_loss"]
     batch_outputs_names = ["predicted_diameter", "predicted_is_ball"]
 
 
@@ -42,6 +44,7 @@ def compute_relative_error(calib: Calib, point3D: Point3D, pixel_size: float):
     den = np.linalg.norm(point3D - calib.C)
     return num/den
 
+
 @dataclass
 class PrintMetricsCallback(Callback):
     after = ["ComputeDiameterError"]
@@ -49,6 +52,7 @@ class PrintMetricsCallback(Callback):
     metrics: list
     def on_epoch_end(self, **state):
         print(", ".join([f"{metric}={state[metric]}" for metric in self.metrics]))
+
 
 @dataclass
 class ComputeDiameterError(Callback):
@@ -83,6 +87,7 @@ class ComputeDiameterError(Callback):
             for name in ["MADE", "MAPE", "MARE"]:
                 state[name] = np.nan
 
+
 @dataclass
 class ComputeDetectionMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
@@ -90,7 +95,7 @@ class ComputeDetectionMetrics(Callback):
     thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
     def on_cycle_begin(self, **_):
         self.acc = {"TP": 0, "FP": 0, "TN": 0, "FN": 0, "P": 0, "N": 0}
-    def on_batch_end(self, target_is_ball, predicted_is_ball, batch_ball_position, batch_has_ball=None, **_):
+    def on_batch_end(self, batch_is_ball, predicted_is_ball, batch_ball_position, batch_has_ball=None, **_):
         balls, inverse = np.unique(np.array(batch_ball_position), axis=0, return_inverse=True)
         for index, _ in enumerate(balls):
             indices = np.where(inverse==index)[0]
@@ -98,7 +103,7 @@ class ComputeDetectionMetrics(Callback):
             # keep index with the largest confidence
             i = indices[np.argmax(predicted_is_ball[indices])]
             output = (predicted_is_ball[i] > self.thresholds).astype(np.uint8)
-            target = target_is_ball[i]
+            target = batch_is_ball[i]
             self.acc['TP'] +=   target   *   output
             self.acc['FP'] += (1-target) *   output
             self.acc['FN'] +=   target   * (1-output)
@@ -126,11 +131,13 @@ class NamedOutputs(ChunkProcessor):
         chunk["predicted_diameter"] = chunk["batch_logits"][...,0]
         chunk["predicted_is_ball"] = chunk["batch_logits"][...,1]
 
+
 class ClassificationLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __call__(self, chunk):
-        chunk["target_is_ball"] = tf.where(tf.math.is_nan(chunk["batch_ball_size"]), 0, 1)
-        chunk["classification_loss"] = tf.keras.losses.binary_crossentropy(chunk["target_is_ball"], chunk["predicted_is_ball"], from_logits=True)
+        # TODO: check if binary crossentropy fits the unconfident targets
+        chunk["classification_loss"] = tf.keras.losses.binary_crossentropy(chunk["batch_is_ball"], chunk["predicted_is_ball"], from_logits=True)
+
 
 class RegressionLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
@@ -142,3 +149,7 @@ class RegressionLoss(ChunkProcessor):
         losses = self.loss(y_true=chunk["batch_ball_size"][mask], y_pred=chunk["predicted_diameter"][mask])
         chunk["regression_loss"] = tf.where(tf.math.is_nan(losses), tf.zeros_like(losses), losses)
 
+
+class AddIsBallTargetFactory(Transform):
+    def __call__(self, view_key: ViewKey, view: View):
+        return {"is_ball": 1 if view.ball.origin == 'annotation' else 0}

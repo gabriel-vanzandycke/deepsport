@@ -12,10 +12,10 @@ from calib3d import Point2D, Point3D
 from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics
 
 from deepsport_utilities.transforms import Transform
-from deepsport_utilities.ds.instants_dataset import Ball, BallState
+from deepsport_utilities.ds.instants_dataset import Ball, BallState, InstantKey
 from experimentator import Callback, ChunkProcessor, ExperimentMode, build_experiment
 from experimentator.tf2_experiment import TensorflowExperiment
-
+from deepsport_utilities.utils import crop_padded
 
 DEFAULT_THRESHOLDS = np.linspace(0,1,51) # Detection thresholds on a detection map between 0 and 1.
 
@@ -24,9 +24,9 @@ class HeatmapDetectionExperiment(TensorflowExperiment):
     @cached_property
     def metrics(self):
         metrics = ["TP", "FP", "TN", "FN", "topk_TP", "topk_FP", "P", "N"]
-        return {
+        return {**{
             name:self.chunk[name] for name in metrics if name in self.chunk
-        }
+        }, **self.outputs}
     @cached_property
     def outputs(self):
         outputs = ["batch_heatmap", "topk_indices", "topk_outputs", "topk_targets"]
@@ -234,15 +234,32 @@ class EnlargeTarget(ChunkProcessor):
 PIFBALL_THRESHOLD = 0.05
 BALLSEG_THRESHOLD = 0.6
 
+# class RepeatedInstantKey(InstantKey):
+#     occurrence: int = 0
+
+# @dataclass
+# class BuildDetectionEvaluationSet(Callback):
+#     filename: str
+#     side_length: int = None
+#     def on_cycle_begin(self, **_):
+#         self.acc = defaultdict(defaultdict(list))
+#     def on_batch_end(self, keys, batch_target, batch_input_image, batch_input_image2, batch_heatmap, topk_outputs, topk_targets, topk_indices, **_):
+#         for view_key, target, image, image2, heatmap, outputs, targets, indices in zip(keys, batch_target, batch_input_image, batch_input_image2, batch_heatmap, topk_outputs, topk_targets, topk_indices):
+#             detections = []
+#             _, K = targets.shape
+#             data[view_key.timestamp] = (heatmap, outputs, targets, indices))
+#             for k in range(K):
+#             self.acc[(view_key.arena_label, view_key.game_id)][view_key.timestamp].append(detections)
 
 class DetectBalls():
-    def __init__(self, dataset_folder, name, config, k, filename, detection_threshold=0):
+    def __init__(self, dataset_folder, name, config, k, filename, detection_threshold=0, side_length=None):
         self.dataset_folder = dataset_folder
         self.detection_threshold = detection_threshold
         self.name = name
         self.filename = filename
         self.database = {}
         self.model = build_experiment(config, k=k)
+        self.side_length = side_length
 
     def detect(self, instant):
         cameras = range(instant.num_cameras)
@@ -272,7 +289,11 @@ class DetectBalls():
                     if not calib.projects_in(ball.center):
                         continue # sanity check for detections that project behind the camera
                     ball.point = point # required to extract pseudo-annotations
-                    ball.heatmap = result['batch_heatmap'][camera_idx].numpy()
+                    if self.side_length is not None:
+                        batch_heatmap = result['batch_heatmap'][camera_idx].numpy()
+                        x_slice = slice(x-self.side_length//2, x+self.side_length//2, None)
+                        y_slice = slice(y-self.side_length//2, y+self.side_length//2, None)
+                        ball.heatmap = crop_padded(batch_heatmap, x_slice, y_slice, self.side_length//2+1)
                     yield ball
 
     def __call__(self, instant_key, instant):
