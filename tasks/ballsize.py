@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import cached_property
 import typing
 
 import numpy as np
@@ -19,10 +20,14 @@ BALL_DIAMETER = 23
 
 
 class BallSizeEstimation(TensorflowExperiment):
-    batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image"]
     batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "regression_loss", "classification_loss"]
     batch_outputs_names = ["predicted_diameter", "predicted_is_ball"]
-
+    @cached_property
+    def batch_inputs_names(self):
+        batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image"]
+        if self.cfg.get('with_diff', None):
+            batch_inputs_names += ["batch_input_image2"]
+        return batch_inputs_names
 
 def compute_point3D(calib: Calib, point2D: Point2D, pixel_size: float, true_size: float):
     center = Point2D(calib.Kinv@calib.rectify(point2D).H)             # center expressed in camera coordinates system

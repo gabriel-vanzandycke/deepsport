@@ -19,7 +19,6 @@ from deepsport_utilities.dataset import Subset, SubsetType
 from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.transforms import Transform
 from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantKey
-from tasks.ballstate import BallStateClassification
 from tasks.detection import divide
 from tasks.classification import ComputeClassifactionMetrics as _ComputeClassifactionMetrics, ComputeConfusionMatrix as _ComputeConfusionMatrix
 
@@ -223,7 +222,7 @@ class ChannelsReductionLayer(ChunkProcessor):
             layers.append(
                 tf.keras.layers.BatchNormalization()
             )
-        self.layers = tf.keras.models.Sequential(layers)
+        self.layers = tf.keras.models.Sequential(layers, "1layer")
         # required for printing chunk processors
         self.kernel_size = kernel_size
         self.maxpool = maxpool
