@@ -1,7 +1,7 @@
 import tensorflow as tf
 import mlworkflow as mlwf
 import experimentator
-from experimentator import find, Subset, SubsetType
+from experimentator import find
 import experimentator.tf2_experiment
 import experimentator.wandb_experiment
 import deepsport_utilities.ds.instants_dataset
@@ -10,110 +10,129 @@ import deepsport_utilities.ds.instants_dataset.dataset_splitters
 import tasks.ballstate
 import tasks.classification
 import models.other
+import tasks.ballsize
 import models.tensorflow
 
 experiment_type = [
     experimentator.AsyncExperiment,
     experimentator.CallbackedExperiment,
     experimentator.tf2_experiment.TensorflowExperiment,
-    tasks.ballstate.BallStateClassification
+    tasks.ballsize.BallSizeEstimation
+    #tasks.ballstate.BallStateAndBallSizeExperiment,
 ]
 
 batch_size = 16
 
-with_diff = True
+with_diff = False
 
 # Dataset parameters
-side_length = 114
+side_length = 64
 output_shape = (side_length, side_length)
 
 # DeepSport Dataset
-dataset_name = "ballstate_dataset.pickle"
+dataset_name = "balls_dataset.pickle"
+size_min = 14 #9   # 14
+size_max = 37# 28  # 37
 scale_min = 0.75
 scale_max = 1.25
 max_shift = 5
 
-globals().update(locals()) # required for lambda definition
-transforms = lambda scale: [
-    deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
+globals().update(locals()) # required for using locals in lambda
+dataset = mlwf.PickledDataset(find(dataset_name))
+
+# transformation should be a function of a scale factor if I want to evaluate on
+# strasbourg and gravelines sequences (in order to evaluate on the scale range trained on)
+dataset = mlwf.TransformedDataset(dataset, [
+    tasks.ballstate.BallViewRandomCropperTransformCompat(
         output_shape=output_shape,
-        scale_min=scale_min*scale,
-        scale_max=scale_max*scale,
+        scale_min=scale_min,
+        scale_max=scale_max,
+        size_min=size_min,
+        size_max=size_max,
         margin=side_length//2-max_shift,
-        on_ball=True,
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory() if with_diff else None,
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
+        #deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(),
+        tasks.ballstate.AddBallSizeFactory(),
+        tasks.ballstate.AddIsBallTargetFactory(),
     )
-]
+])
 
-dataset_splitter = "arenas_specific"
-testing_arena_labels = ["KS-FR-ROANNE", "KS-FR-LILLE", "KS-FR-EVREUX"]
+testing_arena_labels = []
+dataset_splitter_str = 'deepsport'
+validation_pc = 15
+fold = 0
+dataset_splitter = {
+    "deepsport": deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage='testing2', validation_pc=validation_pc),
+    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(testing_arena_labels, validation_pc=validation_pc),
+}[dataset_splitter_str]
+subsets = dataset_splitter(dataset, fold)
+testing_arena_labels = dataset_splitter.testing_arena_labels
 
-dataset = mlwf.PickledDataset(find(dataset_name))
-state_max = BallState.DRIBBLING # DRIBBLING=3, CONSTRAINT=2
-globals().update(locals()) # required for accessing state_max in lambda
-dataset = mlwf.FilteredDataset(dataset, lambda k, v: v.ball.state <= state_max)
-dataset = mlwf.CachedDataset(mlwf.TransformedDataset(dataset, transforms(1)))
-subsets = {
-    "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(testing_arena_labels),
-    "random_shuffle": experimentator.BasicDatasetSplitter(),
-}[dataset_splitter](dataset)
-
-
-# add ballistic dataset
-dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
-subsets.append(Subset("ballistic", SubsetType.EVAL, dataset))
-
+## add ballistic dataset
+#dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
+#subsets.append(Subset("ballistic", SubsetType.EVAL, dataset))
 
 
 globals().update(locals()) # required to use 'BallState' in list comprehention
-classes = [BallState(i) for i in range(state_max+1)]
+#classes = [BallState(i) for i in range(state_max+1)]
 
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
-    experimentator.SaveWeights(),
+    #experimentator.SaveWeights(),
     experimentator.SaveLearningRate(),
     experimentator.GatherCycleMetrics(),
     experimentator.LogStateDataCollector(),
-    tasks.classification.ComputeClassifactionMetrics(),
-    tasks.classification.ComputeConfusionMatrix(classes=classes),
-    experimentator.wandb_experiment.LogStateWandB(),
-    experimentator.LearningRateWarmUp(),
-    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
-    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(2)), class_index=2),
+    experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
+    tasks.ballsize.ComputeDiameterError(),
+#    tasks.classification.ComputeClassifactionMetrics(),
+#    tasks.classification.ComputeConfusionMatrix(classes=classes),
+#    experimentator.wandb_experiment.LogStateWandB(),
+#    experimentator.LearningRateWarmUp(),
+#    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
+#    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(2)), class_index=2),
+    tasks.ballstate.ComputeDetectionMetrics(origin='ballseg'),
+    tasks.detection.AuC("top1-AuC", "top1_metrics"),
+    tasks.detection.AuC("top2-AuC", "top2_metrics"),
+    tasks.detection.AuC("top4-AuC", "top4_metrics"),
+    tasks.detection.AuC("top8-AuC", "top8_metrics"),
+    tasks.detection.AuC("initial_top1-AuC", "initial_top1_metrics"),
+    experimentator.wandb_experiment.LogStateWandB("validation_MAPE", False),
 ]
 
-projector = "conv2d"
+projector = "conv2d3x3" if with_diff else "None"
 projector_network = {
     "None": None,
     "1layer": tasks.ballstate.ChannelsReductionLayer(),
-    "conv2d": lambda chunk: chunk.update({"batch_input": tf.keras.layers.Conv2D(filters=3, kernel_size=3, padding='SAME')(chunk["batch_input"])})
+    "conv2d3x3": lambda chunk: chunk.update({"batch_input": tf.keras.layers.Conv2D(filters=3, kernel_size=3, padding='SAME')(chunk["batch_input"])}),
+    "conv2d1x1": lambda chunk: chunk.update({"batch_input": tf.keras.layers.Conv2D(filters=3, kernel_size=1, padding='SAME')(chunk["batch_input"])})
 }[projector]
 
-backbone = "VGG"
-pretrained = True
-backbone_model = {
-    "VGG": models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False, weights='imagenet' if pretrained else None),
-    "RN50": models.tensorflow.TensorflowBackbone("resnet50.ResNet50", include_top=False, weights='imagenet' if pretrained else None),
-}[backbone]
-
+alpha = .5
 globals().update(locals()) # required to use locals() in lambdas
 chunk_processors = [
     experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_input_image2"]),
-    lambda chunk: chunk.update({'batch_input_diff': tf.subtract(chunk["batch_input_image"], chunk["batch_input_image2"])}),
+    lambda chunk: chunk.update({'batch_input_diff': tf.subtract(chunk["batch_input_image"], chunk["batch_input_image2"])}) if with_diff else None,
     models.other.GammaAugmentation("batch_input_image"),
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
-    projector_network,
-    models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False),
-    models.other.LeNetHead(output_features=len(classes)),
-    lambda chunk: chunk.update({"batch_target": tf.one_hot(chunk['batch_ball_state'], len(classes))}),
-    lambda chunk: chunk.update({"loss": tf.keras.losses.binary_crossentropy(chunk["batch_target"], chunk["batch_logits"], from_logits=True)}),
-    lambda chunk: chunk.update({"loss": tf.reduce_mean(chunk["loss"])}),
-    lambda chunk: chunk.update({"batch_output": tf.nn.softmax(chunk["batch_logits"])})
+    projector_network if with_diff else None,
+    models.tensorflow.SixChannelsTensorflowBackbone("vgg16.VGG16", include_top=False),
+    models.other.LeNetHead(output_features=2),#len(classes)),
+    tasks.ballsize.NamedOutputs(),
+    tasks.ballsize.ClassificationLoss(),
+    tasks.ballsize.RegressionLoss(),
+    #lambda chunk: chunk.update({"batch_target": tf.one_hot(chunk['batch_ball_state'], len(classes))}),
+    #lambda chunk: chunk.update({"loss": tf.keras.losses.binary_crossentropy(chunk["batch_target"], chunk["batch_logits"], from_logits=True)}),
+    #lambda chunk: chunk.update({"loss": tf.reduce_mean(chunk["loss"])}),
+    lambda chunk: chunk.update({"loss": alpha*chunk["classification_loss"] + (1-alpha)*chunk["regression_loss"]}),
+    lambda chunk: chunk.update({"predicted_is_ball": tf.nn.sigmoid(chunk["predicted_is_ball"])}),
+    #lambda chunk: chunk.update({"batch_output": tf.nn.softmax(chunk["batch_logits"])})
 ]
 
 learning_rate = 1e-4
