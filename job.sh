@@ -5,8 +5,10 @@
 #SBATCH --mem=50G
 #SBATCH --gres="gpu:1"
 #SBATCH --partition=gpu
+#SBATCH --exclude=mb-mil102
 
 #workers=`echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l`
+workers=0
 
 REMAINING_ARGS=()
 while [[ $# -gt 0 ]]; do
@@ -17,6 +19,12 @@ while [[ $# -gt 0 ]]; do
             shift # past argument
             shift # past value
             ;;
+        --mem)
+            workers=$((`nvidia-smi --query-gpu=index,memory.total --format=csv | tail -1 | awk '{print $2}'` / $2))
+            echo "With memory limit of $2, $workers workers will be launched"
+            shift # past argument
+            shift # past value
+            ;;
         *)
             REMAINING_ARGS+=($1) # save positional arg
             shift # past argument
@@ -24,4 +32,4 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-python -m experimentator ${REMAINING_ARGS[@]} --kwargs "jobid=${SLURM_JOB_ID}"
+python -m experimentator ${REMAINING_ARGS[@]} --kwargs "jobid=${SLURM_JOB_ID}" --workers $workers
