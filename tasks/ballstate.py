@@ -8,8 +8,6 @@ from calib3d import Point2D
 import tensorflow as tf
 import pandas
 
-
-
 from experimentator import ExperimentMode, ChunkProcessor, Subset, Callback
 from experimentator.tf2_experiment import TensorflowExperiment
 from dataset_utilities.ds.raw_sequences_dataset import BallState
@@ -53,6 +51,7 @@ class BallStateClassification(TensorflowExperiment):
             keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
             # yields pairs of (keys, data)
             yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
+
 
 
 class BallStateAndBallSizeExperiment(TensorflowExperiment):
@@ -166,23 +165,29 @@ class ComputeDetectionMetrics(Callback):
                 key = (view_key.instant_key, view_key.camera)
                 if ball.origin == self.origin:
                     self.d_acc[key].append((ball, target_is_ball, predicted))
+                    if np.any(target_is_ball):
+                        self.t_acc[key] = True # balls might be visible on an image despite having been annotated on another.
                 elif ball.origin == 'annotation':
                     self.t_acc[key] = True
+
     def on_cycle_end(self, state, **_):
         for k in [None, 1, 2, 4, 8]:
             TP = np.zeros((len(self.thresholds), ))
             FP = np.zeros((len(self.thresholds), ))
             P = N = 0
+            P_upper_bound = 0
             for key, zipped in self.d_acc.items():
                 balls, target_is_ball, predicted_is_ball = zip(*zipped)
                 values = [b.value for b in balls]
                 if k is None:
                     index = np.argmax(values)
+                    P_upper_bound += np.any(target_is_ball)
                 else:
                     indices = np.argsort(values)[-k:]
                     index = indices[np.argmax(np.array(predicted_is_ball)[indices])]
-
                     values = predicted_is_ball
+                    P_upper_bound += np.any(np.array(target_is_ball)[indices])
+
                 output = (values[index] >= self.thresholds).astype(np.uint8)
                 target = target_is_ball[index]
                 TP +=   target   *  output
@@ -190,7 +195,10 @@ class ComputeDetectionMetrics(Callback):
 
                 has_ball = self.t_acc[key]
                 P  +=   has_ball
-                N  += 1 - has_ball
+                N  += not has_ball
+
+            name = 'initial_TP_rate_upper_bound' if k is None else f'top{k}_TP_rate_upper_bound'
+            state[name] = P_upper_bound/P
 
             P = np.array(P)[np.newaxis]
             N = np.array(N)[np.newaxis]
@@ -200,13 +208,24 @@ class ComputeDetectionMetrics(Callback):
                 "TP rate": divide(TP, P),      # #-possible cases is the number of images on which there's a ball to detect
                 "precision": divide(TP, TP + FP),
                 "recall": divide(TP, P),
-                }
-            name = f'initial_top1_metrics' if k is None else f'top{k}_metrics'
+            }
+
+            name = 'initial_top1_metrics' if k is None else f'top{k}_metrics'
             state[name] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
 
-
-
-
+@dataclass
+class TopkNormalizedGain(Callback):
+    before = ["GatherCycleMetrics"]
+    after = ['AuC', 'ComputeDetectionMetrics']
+    when = ExperimentMode.EVAL
+    k: list
+    close_curve: bool = True
+    def on_cycle_end(self, state, **_):
+        for k in self.k:
+            baseline = state['initial_top1-AuC']
+            gain             = state[f'top{k}-AuC']                 - baseline
+            gain_upper_bound = state[f'top{k}_TP_rate_upper_bound'] - baseline
+            state[f'top{k}_normalized_gain'] = gain/gain_upper_bound
 
 class ChannelsReductionLayer(ChunkProcessor):
     mode = ExperimentMode.ALL
