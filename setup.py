@@ -17,7 +17,7 @@ setup(
         "numpy",
         "calib3d>=2.8.1",
         "pandas",
-        "deepsport-utilities>=4.8.0",
+        "deepsport-utilities>=4.8.2",
         "tensorflow",
         "python-dotenv",
         "scikit-learn",

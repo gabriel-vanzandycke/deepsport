@@ -2,7 +2,7 @@
 
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=50G
+#SBATCH --mem=40G
 #SBATCH --gres="gpu:1"
 #SBATCH --partition=gpu
 #SBATCH --exclude=mb-mil102
@@ -13,12 +13,6 @@ workers=0
 REMAINING_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --file)
-            echo "Copying '$2' from global scratch to local scratch"
-            rsync -ah --progress "$GLOBALSCRATCH/$2" "$LOCALSCRATCH/$2"
-            shift # past argument
-            shift # past value
-            ;;
         --mem)
             workers=$((`nvidia-smi --query-gpu=index,memory.total --format=csv | tail -1 | awk '{print $2}'` / $2))
             echo "With memory limit of $2, $workers workers will be launched"

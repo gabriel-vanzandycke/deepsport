@@ -30,7 +30,7 @@ side_length = 64
 output_shape = (side_length, side_length)
 
 # DeepSport Dataset
-dataset_name = "balls_dataset.pickle"
+dataset_name = "ids_balls_dataset.pickle"
 size_min = 14 #9   # 14
 size_max = 37# 28  # 37
 scale_min = 0.75
@@ -38,7 +38,7 @@ scale_max = 1.25
 max_shift = 5
 
 globals().update(locals()) # required for using locals in lambda
-dataset = mlwf.PickledDataset(find(dataset_name))
+dataset = experimentator.CachedPickledDataset(find(dataset_name))
 
 # transformation should be a function of a scale factor if I want to evaluate on
 # strasbourg and gravelines sequences (in order to evaluate on the scale range trained on)
@@ -81,19 +81,20 @@ testing_arena_labels = dataset_splitter.testing_arena_labels
 
 globals().update(locals()) # required to use 'BallState' in list comprehention
 #classes = [BallState(i) for i in range(state_max+1)]
-
+decay_start = 20
+warmup = False
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
     #experimentator.SaveWeights(),
     experimentator.SaveLearningRate(),
     experimentator.GatherCycleMetrics(),
     experimentator.LogStateDataCollector(),
-    experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
+    experimentator.LearningRateDecay(start=range(decay_start,101,10), duration=2, factor=.5) if not warmup else None,
     tasks.ballsize.ComputeDiameterError(),
 #    tasks.classification.ComputeClassifactionMetrics(),
 #    tasks.classification.ComputeConfusionMatrix(classes=classes),
 #    experimentator.wandb_experiment.LogStateWandB(),
-#    experimentator.LearningRateWarmUp(),
+    experimentator.LearningRateWarmUp() if warmup else None,
 #    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(1)), class_index=1),
 #    tasks.classification.ExtractClassificationMetrics(class_name=str(BallState(2)), class_index=2),
     tasks.ballstate.ComputeDetectionMetrics(origin='ballseg'),
@@ -103,15 +104,22 @@ callbacks = [
     tasks.detection.AuC("top8-AuC", "top8_metrics"),
     tasks.detection.AuC("initial_top1-AuC", "initial_top1_metrics"),
     experimentator.wandb_experiment.LogStateWandB("validation_MAPE", False),
+    tasks.ballstate.TopkNormalizedGain([1, 2, 4, 8]),
 ]
 
-projector = "conv2d3x3" if with_diff else "None"
+projector = "None"
 projector_network = {
     "None": None,
     "1layer": tasks.ballstate.ChannelsReductionLayer(),
     "conv2d3x3": lambda chunk: chunk.update({"batch_input": tf.keras.layers.Conv2D(filters=3, kernel_size=3, padding='SAME')(chunk["batch_input"])}),
     "conv2d1x1": lambda chunk: chunk.update({"batch_input": tf.keras.layers.Conv2D(filters=3, kernel_size=1, padding='SAME')(chunk["batch_input"])})
 }[projector]
+
+skip = False
+backbone = {
+    True: models.tensorflow.SkipConnectionCroppedInputsModelSixCannels,
+    False: models.tensorflow.SixChannelsTensorflowBackbone,
+}[skip]
 
 alpha = .5
 globals().update(locals()) # required to use locals() in lambdas
@@ -122,7 +130,7 @@ chunk_processors = [
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
     projector_network if with_diff else None,
-    models.tensorflow.SixChannelsTensorflowBackbone("vgg16.VGG16", include_top=False),
+    backbone("vgg16.VGG16", include_top=False),
     models.other.LeNetHead(output_features=2),#len(classes)),
     tasks.ballsize.NamedOutputs(),
     tasks.ballsize.ClassificationLoss(),
