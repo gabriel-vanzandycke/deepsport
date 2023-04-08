@@ -23,10 +23,10 @@ experiment_type = [
 
 batch_size = 16
 
-with_diff = False
+with_diff = True
 
 # Dataset parameters
-side_length = 64
+side_length = 224
 output_shape = (side_length, side_length)
 
 # DeepSport Dataset
@@ -107,15 +107,7 @@ callbacks = [
     tasks.ballstate.TopkNormalizedGain([1, 2, 4, 8]),
 ]
 
-projector = "None"
-projector_network = {
-    "None": None,
-    "1layer": tasks.ballstate.ChannelsReductionLayer(),
-    "conv2d3x3": lambda chunk: chunk.update({"batch_input": tf.keras.layers.Conv2D(filters=3, kernel_size=3, padding='SAME')(chunk["batch_input"])}),
-    "conv2d1x1": lambda chunk: chunk.update({"batch_input": tf.keras.layers.Conv2D(filters=3, kernel_size=1, padding='SAME')(chunk["batch_input"])})
-}[projector]
-
-skip = False
+skip = True
 backbone = {
     True: models.tensorflow.SkipConnectionCroppedInputsModelSixCannels,
     False: models.tensorflow.SixChannelsTensorflowBackbone,
@@ -129,7 +121,6 @@ chunk_processors = [
     models.other.GammaAugmentation("batch_input_image"),
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
-    projector_network if with_diff else None,
     backbone("vgg16.VGG16", include_top=False),
     models.other.LeNetHead(output_features=2),#len(classes)),
     tasks.ballsize.NamedOutputs(),
@@ -143,5 +134,5 @@ chunk_processors = [
     #lambda chunk: chunk.update({"batch_output": tf.nn.softmax(chunk["batch_logits"])})
 ]
 
-learning_rate = 1e-4
+learning_rate = 2e-5
 optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
