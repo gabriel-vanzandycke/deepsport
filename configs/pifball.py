@@ -65,7 +65,7 @@ callbacks = [
     experimentator.LogStateDataCollector(),
     experimentator.wandb_experiment.LogStateWandB(criterion_metric="validation_top1-AuC"),
     experimentator.LearningRateWarmUp(start=0, duration=1, factor=0.0001),
-    experimentator.StopFailedTraining(),
+    #experimentator.StopFailedTraining(),
 ]
 
 

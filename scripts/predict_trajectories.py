@@ -11,7 +11,7 @@ import wandb
 from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
 
-from tasks.ballistic import MatchTrajectories, SelectBall, ComputeSampleMetrics
+from tasks.ballistic import MatchTrajectories, ComputeSampleMetrics#SelectBall,
 from models.ballistic import TrajectoryDetector, UseStateFilteredFitter2D, FilteredFitter2D, Fitter2D
 
 dotenv.load_dotenv()
@@ -92,7 +92,7 @@ if __name__ == '__main__':
 
         # Process sequence
         dds = PickledDataset(find(args.positions_dataset))
-        dds = TransformedDataset(dds, [SelectBall('ballseg')])
+        #dds = TransformedDataset(dds, [SelectBall('ballseg')])
         gen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
         sw = TrajectoryDetector(fitter_types, **kwargs)
         compare = ComputeSampleMetrics(min_duration=args.min_duration, min_duration_TP=args.min_duration_TP)

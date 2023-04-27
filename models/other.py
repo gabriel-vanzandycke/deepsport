@@ -23,8 +23,10 @@ class GammaAugmentation(ChunkProcessor):
 
 
 class LeNetHead(ChunkProcessor):
-    def __init__(self, output_features):
+    def __init__(self, output_features, name='batch', input_tensor='batch_logits'):
         self.output_features = output_features
+        self.input_tensor = input_tensor
+        self.name = name
     @cached_property
     def model(self):
         return tf.keras.Sequential([
@@ -32,9 +34,9 @@ class LeNetHead(ChunkProcessor):
             tf.keras.layers.Dense(120, activation='relu'),
             tf.keras.layers.Dense(84, activation='relu'),
             tf.keras.layers.Dense(self.output_features),
-        ])
+        ], name=f"{self.name}_head")
     def __call__(self, chunk):
-        chunk["batch_logits"] = self.model(chunk["batch_logits"])
+        chunk[f"{self.name}_logits"] = self.model(chunk[self.input_tensor])
 
 class CropBlockDividable(ChunkProcessor):
     def __init__(self, tensor_names, block_size=16):

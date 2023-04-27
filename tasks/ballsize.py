@@ -24,10 +24,14 @@ class BallSizeEstimation(TensorflowExperiment):
     batch_outputs_names = ["predicted_diameter", "predicted_is_ball"]
     @cached_property
     def batch_inputs_names(self):
-        batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image"]
+        batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image", "epoch"]
         if self.cfg.get('with_diff', None):
             batch_inputs_names += ["batch_input_image2"]
         return batch_inputs_names
+
+    def train(self, *args, **kwargs):
+        self.cfg['testing_arena_labels'] = self.cfg['dataset_splitter'].testing_arena_labels
+        return super().train(*args, **kwargs)
 
 def compute_point3D(calib: Calib, point2D: Point2D, pixel_size: float, true_size: float):
     center = Point2D(calib.Kinv@calib.rectify(point2D).H)             # center expressed in camera coordinates system
@@ -132,17 +136,21 @@ class ComputeDetectionMetrics(Callback):
 
 
 class NamedOutputs(ChunkProcessor):
+    def __init__(self, input_name='batch_logits'):
+        self.input_name = input_name
     def __call__(self, chunk):
-        chunk["predicted_diameter"] = chunk["batch_logits"][...,0]
-        chunk["predicted_is_ball"] = chunk["batch_logits"][...,1]
+        chunk["predicted_diameter"] = chunk[self.input_name][...,0]
+        chunk["predicted_is_ball"] = chunk[self.input_name][...,1]
 
 
-class ClassificationLoss(ChunkProcessor):
+class IsBallClassificationLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __call__(self, chunk):
         # TODO: check if binary crossentropy fits the unconfident targets
         chunk["classification_loss"] = tf.keras.losses.binary_crossentropy(chunk["batch_is_ball"], chunk["predicted_is_ball"], from_logits=True)
 
+class ClassificationLoss(IsBallClassificationLoss):
+    pass # retrocompatibility
 
 class RegressionLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL

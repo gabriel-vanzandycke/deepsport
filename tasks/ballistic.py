@@ -30,7 +30,7 @@ class ComputeSampleMetrics:
         self.detections_MAPE = []            # MAPE between GT and all original detections
     def __call__(self, gen):
         for i, sample in enumerate(gen):
-            if hasattr(sample, 'ball'):
+            if sample.ball is not None:
                 if hasattr(sample.ball, 'model'):
                     if sample.ball_state == BallState.FLYING \
                      and (not self.min_duration_TP or sample.ball.model.window.duration >= self.min_duration): # new here
@@ -59,14 +59,15 @@ class ComputeSampleMetrics:
             yield sample
     @property
     def metrics(self):
+        mean = lambda x: np.mean(x) if x else np.nan
         return {
             "TP": self.TP,
             "FP": self.FP,
             "FN": self.FN,
             "TN": self.TN,
-            "ballistic_all_MAPE": np.mean(self.ballistic_all_MAPE),
-            "ballistic_restricted_MAPE": np.mean(self.ballistic_restricted_MAPE),
-            "detections_MAPE": np.mean(self.detections_MAPE),
+            "ballistic_all_MAPE": mean(self.ballistic_all_MAPE),
+            "ballistic_restricted_MAPE": mean(self.ballistic_restricted_MAPE),
+            "detections_MAPE": mean(self.detections_MAPE),
             "interpolated": self.interpolated,
             's_precision': self.TP / (self.TP + self.FP) if self.TP > 0 else 0,
             's_recall': self.TP / (self.TP + self.FN) if self.TP > 0 else 0,
@@ -202,7 +203,7 @@ class MatchTrajectories:
         samples = []
         for sample in gen:
             # skip samples without valid ball model
-            if not hasattr(sample, 'ball') \
+            if sample.ball is None \
             or not hasattr(sample.ball, 'model') \
             or sample.ball.model is None \
             or not isinstance(getattr(sample.ball.model, "mark", ModelMarkAccepted()), ModelMarkAccepted):
@@ -349,7 +350,7 @@ class InstantRenderer():
         for image, calib in zip(instant.images, instant.calibs):
             pd = ProjectiveDrawer(calib, (0, 120, 255), segments=1)
 
-            if ball := getattr(sample, "ball", None):
+            if ball := sample.ball:
                 for model in getattr(sample, "models", []):
                     self.draw_model(pd, image, model, color=(255, 0, 20), label=model.message)
                 if model := getattr(ball, "model", None):
@@ -378,17 +379,17 @@ class TrajectoryRenderer(InstantRenderer):
             yield from super().__call__(instant, sample)
 
 
-class SelectBall:
-    def __init__(self, origin):
-        self.origin = origin
-    def __call__(self, key, item):
-        try:
-            item.ball = max([d for d in item.ball_detections if d.origin == self.origin], key=lambda d: d.value)
-            item.timestamp = item.timestamps[item.ball.camera]
-            item.calib = item.calibs[item.ball.camera]
-        except ValueError:
-            pass
-        item.models = []
-        return item
+# class SelectBall:
+#     def __init__(self, origin):
+#         self.origin = origin
+#     def __call__(self, key, item):
+#         try:
+#             item.ball = max([d for d in item.ball_detections if d.origin == self.origin], key=lambda d: d.value)
+#             item.timestamp = item.timestamps[item.ball.camera]
+#             item.calib = item.calibs[item.ball.camera]
+#         except ValueError:
+#             pass
+#         item.models = []
+#         return item
 
 

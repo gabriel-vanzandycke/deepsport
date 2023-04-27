@@ -103,8 +103,29 @@ class ComputeTopkMetrics(Callback):
 
         # TODO: handle multple classes cases (here only class index is picked and the rest is discarded)
 
+
+def compute_auc(x, y, close_curve=True):
+    if close_curve:
+        x = np.concatenate([[0], x, [1]])
+        y = np.concatenate([[0], y, [y[-1]]])
+    return np.trapz(y, x)
+
 @dataclass
 class AuC(Callback):
+    """ Compute the Area Under the Curve (AuC) of the ROC curve defined by the
+        columns `x_label` and `y_label` from the table `table_name`.
+        The result is stored in the state under the key `name`.
+
+        Arguments:
+            name: key under which the result is stored in the state
+            table_name: name of the table from which the data is extracted
+            x_label: name of the column containing the x values
+            y_label: name of the column containing the y values
+            x_lim: ROC curve is clipped at x=x_lim (required for top-k metric
+                when the number of detections (k) is larger than the number of
+                positives samples (1).
+            close_curve: if True, curve is prolungated horizontally util x=1.
+    """
     after = ["ComputeTopkMetrics", "ComputeMetrics", "HandleMetricsPerBallSize"]
     before = ["GatherCycleMetrics"]
     when = ExperimentMode.EVAL
@@ -238,7 +259,7 @@ BALLSEG_THRESHOLD = 0.6
 #     occurrence: int = 0
 
 # @dataclass
-# class BuildDetectionEvaluationSet(Callback):
+# class SaveDetectionEvaluationSet(Callback):
 #     filename: str
 #     side_length: int = None
 #     def on_cycle_begin(self, **_):
@@ -251,50 +272,80 @@ BALLSEG_THRESHOLD = 0.6
 #             for k in range(K):
 #             self.acc[(view_key.arena_label, view_key.game_id)][view_key.timestamp].append(detections)
 
-class DetectBalls():
-    def __init__(self, dataset_folder, name, config, k, filename, detection_threshold=0, side_length=None):
-        self.dataset_folder = dataset_folder
-        self.detection_threshold = detection_threshold
-        self.name = name
-        self.filename = filename
-        self.database = {}
-        self.model = build_experiment(config, k=k)
+
+
+class ExtractGlimpse(ChunkProcessor):
+    def __init__(self, oracle, side_length):
+        self.oracle = oracle
         self.side_length = side_length
 
-    def detect(self, instant):
-        cameras = range(instant.num_cameras)
-        offset = instant.offsets[1]
-        data = {
-            "batch_input_image": np.stack(instant.images),
-            "batch_input_image2": np.stack([instant.all_images[(c, offset)] for c in cameras])
-        }
+    def __call__(self, chunk):
+        ks = range(chunk['topk_indices'].get_shape()[-2])
+        if self.oracle:
+            offsets = lambda _: tf.cast(tf.stack([tf.reduce_mean(tf.where(t), axis=0) for t in chunk["batch_target"]]))
+            assert len(ks) == 1, "Oracle detection can only work when k=1 (as placeholders are constructed using k)"
+        else:
+            offsets = lambda k: tf.cast(chunk['topk_indices'][:,0,0,k,:], tf.float32) - self.side_length//2
 
-        result = self.model.predict(data)
+        chunk["batch_input_image"] = tf.stack([
+            tf.image.extract_glimpse(
+                tf.cast(chunk['batch_input_image'], tf.float32),
+                size=(self.side_length, self.side_length), offsets=offsets(k), centered=False, normalized=False, noise='zero'
+            ) for k in ks
+        ], 1)
+        chunk["batch_input_image"] = tf.reshape(chunk["batch_input_image"], [-1, self.side_length, self.side_length, 3])
+
+        chunk["batch_heatmap"] = tf.stack([
+            tf.image.extract_glimpse(
+                tf.cast(chunk['batch_heatmap'], tf.float32)[..., tf.newaxis],
+                size=(self.side_length, self.side_length), offsets=offsets(k), centered=False, normalized=False, noise='zero'
+            ) for k in ks
+        ], 1)
+        chunk["batch_heatmap"] = tf.reshape(chunk["batch_heatmap"], [-1, self.side_length, self.side_length])
+
+
+
+class DetectBalls():
+    def __init__(self, config, name, threshold=0, side_length=None, **kwargs):
+        self.exp = build_experiment(config, **kwargs)
+        self.detection_threshold = threshold
+        self.name = name
+        self.side_length = side_length
+    def __call__(self, keys, data):
+        result = self.exp.predict(data)
         B, _, _, K = result['topk_outputs'].shape
-        for camera_idx in range(B):
+        for b, key in enumerate(keys):
             for i in range(K):
-                y, x = np.array(result['topk_indices'][camera_idx, 0, 0, i])
-                value = result['topk_outputs'][camera_idx, 0, 0, i].numpy()
+                y, x = np.array(result['topk_indices'][b, 0, 0, i])
+                value = result['topk_outputs'][b, 0, 0, i].numpy()
                 if value > self.detection_threshold:
-                    calib = instant.calibs[camera_idx]
+                    calib = data["batch_calib"][b]
                     point = Point2D(x, y)
                     ball = Ball({
                         "origin": self.name,
                         "center": calib.project_2D_to_3D(point, Z=0),
-                        "image": camera_idx,
+                        "image": b,
                         "visible": True, # visible enough to have been detected by a detector
                         "value": value,
-                        "state": getattr(instant, "ball_state", BallState.NONE),
+                        "state": data['batch_ball_state'][b] if 'batch_ball_state' in data else BallState.NONE,
                     })
                     if not calib.projects_in(ball.center):
                         continue # sanity check for detections that project behind the camera
                     ball.point = point # required to extract pseudo-annotations
                     if self.side_length is not None:
-                        batch_heatmap = result['batch_heatmap'][camera_idx].numpy()
+                        batch_heatmap = result['batch_heatmap'][b].numpy()
                         x_slice = slice(x-self.side_length//2, x+self.side_length//2, None)
                         y_slice = slice(y-self.side_length//2, y+self.side_length//2, None)
                         ball.heatmap = crop_padded(batch_heatmap, x_slice, y_slice, self.side_length//2+1)
-                    yield ball
+                    yield (key, i), ball
+
+
+class DumpDetectedBallsFromInstants(DetectBalls):
+    def __init__(self, dataset_folder, filename, *args, **kwargs):
+        super.__init__(*args, **kwargs)
+        self.dataset_folder = dataset_folder
+        self.filename = filename
+        self.database = {}
 
     def __call__(self, instant_key, instant):
         filename = os.path.join(self.dataset_folder, instant_key.arena_label, str(instant_key.game_id), self.filename)
@@ -305,7 +356,15 @@ class DetectBalls():
         # Detect balls
         detections = database.get(instant_key.timestamp, [])
         detections = list(filter(lambda d: d.origin != self.name, detections)) # remove previous detections from given model
-        detections.extend(self.detect(instant))
+
+        cameras = range(instant.num_cameras)
+        offset = instant.offsets[1]
+        data = {
+            "batch_input_image": np.stack(instant.images),
+            "batch_input_image2": np.stack([instant.all_images[(c, offset)] for c in cameras])
+        }
+        keys = tuple((instant_key, c) for c in cameras)
+        detections.extend([kv[1] for kv in super.__call__(keys, data)])
         database[instant_key.timestamp] = detections
 
         # Save updated database
@@ -370,7 +429,7 @@ class ImportDetectionsTransform(Transform):
         # Load database
         key = (instant_key.arena_label, instant_key.game_id)
         if key not in self.database:
-            filename = self.database_path = os.path.join(self.dataset_folder, instant_key.arena_label, str(instant_key.game_id), self.filename)
+            filename = os.path.join(self.dataset_folder, instant_key.arena_label, str(instant_key.game_id), self.filename)
             self.database[key] = pickle.load(open(filename, "rb"))
         if self.filename == "balls3d.pickle": # OLD VERSION
             detections = self.database[key].get(instant.frame_indices[0], [])

@@ -85,7 +85,7 @@ chunk_processors = [
     models.icnet.ICNetHead(num_classes=1),
     experimentator.tf2_chunk_processors.SigmoidCrossEntropyLoss(),
     lambda chunk: chunk.update({"batch_heatmap": tf.nn.sigmoid(chunk["batch_logits"])}),
-    tasks.detection.ComputeKeypointsDetectionHitmap(non_max_suppression_pool_size=int(size_max*1.1)),
+    tasks.detection.ComputeKeypointsDetectionHitmap(non_max_suppression_pool_size=size_max*2),
     tasks.detection.ConfidenceHitmap(),
     tasks.detection.ComputeTopK(k=k),
     tasks.detection.EnlargeTarget(int(size_min/2)),

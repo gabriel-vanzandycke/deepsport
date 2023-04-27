@@ -1,5 +1,8 @@
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import cached_property
+import os
+import pickle
 from typing import NamedTuple
 import typing
 
@@ -8,18 +11,28 @@ from calib3d import Point2D
 import tensorflow as tf
 import pandas
 
-from experimentator import ExperimentMode, ChunkProcessor, Subset, Callback
+from experimentator import ExperimentMode, ChunkProcessor, Subset, Callback, build_experiment
 from experimentator.tf2_experiment import TensorflowExperiment
 from dataset_utilities.ds.raw_sequences_dataset import BallState
 from deepsport_utilities.ds.instants_dataset import BallState, BallViewRandomCropperTransform, Ball, ViewKey, View, InstantKey
 
-from deepsport_utilities.dataset import Subset, SubsetType
+from deepsport_utilities.dataset import Subset, SubsetType, find
 from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.transforms import Transform
 from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantKey
 from tasks.detection import divide
 from tasks.classification import ComputeClassifactionMetrics as _ComputeClassifactionMetrics, ComputeConfusionMatrix as _ComputeConfusionMatrix
 
+class StateOnlyBalancer():
+    def __init__(self, cfg):
+        self.classes = list(cfg['classes']) # makes a copy
+        self.classes.remove(BallState.NONE)
+        self.get_class = lambda k,v: v['ball_state']
+        self.dataset_name = cfg['dataset_name']
+
+    @cached_property
+    def cache(self):
+        return {}
 
 class BallStateClassification(TensorflowExperiment):
     batch_inputs_names = ["batch_ball_state", "batch_input_image", "batch_input_image2"]
@@ -27,32 +40,57 @@ class BallStateClassification(TensorflowExperiment):
     batch_outputs_names = ["batch_output"]
 
     @staticmethod
-    def balanced_keys_generator(keys, get_class, classes, cache, query_item):
+    def balanced_keys_generator(keys, balancer, query_item):
         pending = defaultdict(list)
         for key in keys:
             try:
-                c = cache.get(key) or cache.setdefault(key, get_class(key, query_item(key)))
+                c = balancer.cache.get(key) or balancer.cache.setdefault(key, balancer.get_class(key, query_item(key)))
             except KeyError:
                 continue
+            except TypeError: # if query_item(key) is None (i.e. impossible to satisfy crop) a TypeError will be raised.
+                continue
             pending[c].append(key)
-            if all([len(pending[c]) > 0 for c in classes]):
-                for c in classes:
+            if all([len(pending[c]) > 0 for c in balancer.classes]):
+                for c in balancer.classes:
                     yield pending[c].pop(0)
 
-    class_cache = {}
+    @cached_property
+    def balancer(self):
+        return self.cfg['balancer'](self.cfg)
+
     def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
         if subset.name == "ballistic":
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
             batch_size = batch_size or self.batch_size
-            classes = list(self.cfg['classes']) # makes a copy
-            classes.remove(BallState.NONE)
-            get_class = lambda k,v: v['ball_state']
-            keys = self.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
+            keys = self.balanced_keys_generator(subset.shuffled_keys(), self.balancer, subset.dataset.query_item)
             # yields pairs of (keys, data)
             yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
 
 
+class TwoTasksBalancer():
+    def __init__(self, cfg):
+        self.classes = [str(c) for c in cfg['classes'] if c != BallState.NONE]
+        self.classes.extend(['ball_annotation', 'ball_interpolation', 'noball', 'other'])
+        self.dataset_name = cfg['dataset_name']
+
+    @cached_property
+    def cache(self):
+        if filename := find(f"{self.dataset_name}.classes_cache.pickle", fail=False):
+            with open(filename, "rb") as f:
+                return pickle.load(f)
+        return {}
+
+    @staticmethod
+    def get_class(k,v):
+        trusted_origins = ['annotation', 'interpolation']
+        if v['ball'].origin in trusted_origins:
+            return 'ball_' + v['ball'].origin
+        if v['ball_state'] != BallState.NONE:
+            return str(v['ball_state'])
+        if v['is_ball'] == 0:
+            return 'noball'
+        return 'other'
 
 class BallStateAndBallSizeExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_input_image", "batch_input_image2",
@@ -61,28 +99,53 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
                            "regression_loss", "classification_loss", "state_loss"]
     batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state"]
 
-    class_cache = {}
+    @cached_property
+    def balancer(self):
+        return self.cfg['balancer'](self.cfg)
+
     def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
         if subset.type == SubsetType.EVAL:
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
             batch_size = batch_size or self.batch_size
-            classes = [str(c) for c in self.cfg['classes'] if c != BallState.NONE]
-            classes.extend(['ball_annotation', 'ball_interpolation', 'noball', 'other'])
-            trusted_origins = ['annotation', 'interpolation']
-            def get_class(k,v):
-                if v['ball'].origin in trusted_origins:
-                    return 'ball_' + v['ball'].origin
-                if v['ball_state'] != BallState.NONE:
-                    return str(v['ball_state'])
-                if v['is_ball'] == 0:
-                    return 'noball'
-                return 'other'
-            keys_gen = BallStateClassification.balanced_keys_generator(subset.shuffled_keys(), get_class, classes, self.class_cache, subset.dataset.query_item)
+            keys_gen = BallStateClassification.balanced_keys_generator(subset.shuffled_keys(), self.balancer, subset.query_item)
             # yields pairs of (keys, data)
             yield from subset.batches(keys=keys_gen, batch_size=batch_size, *args, **kwargs)
 
+    def train(self, *args, **kwargs):
+        self.cfg['testing_arena_labels'] = self.cfg['dataset_splitter'].testing_arena_labels
+        return super().train(*args, **kwargs)
 
+    @cached_property
+    def chunk(self):
+        chunk = super().chunk
+
+        if experiment_id := self.cfg.get("ballsize_weights"):
+            folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
+            exp = None
+
+            for name, condition in [
+                ("backbone",        lambda cp: hasattr(cp, "model")),
+                ("regression_head", lambda cp: hasattr(cp, "model") and cp.model.name == 'regression_head'),
+            ]:
+                filename = os.path.join(folder, name)
+                if not os.path.exists(f"{filename}.index"):
+                    exp = exp or build_experiment(os.path.join(folder, "config.py"))
+                    exp.load_weights(now=True)
+                    for cp in exp.chunk_processors:
+                        if condition(cp):
+                            cp.model.save_weights(filename)
+                            break
+                for cp in self.chunk_processors:
+                    if condition(cp):
+                        print(f"Loading {name} weights from {filename}")
+                        cp.model.load_weights(filename)
+                        if self.cfg.get('freeze_ballsize', False):
+                            cp.model.trainable = False
+                        break
+        elif self.cfg.get('freeze_ballsize', False):
+            raise ValueError("Cannot freeze ballsize weights if no experiment_id is provided")
+        return chunk
 
 class AddBallSizeFactory(Transform):
     def __call__(self, view_key, view):
@@ -227,39 +290,9 @@ class TopkNormalizedGain(Callback):
             gain_upper_bound = state[f'top{k}_TP_rate_upper_bound'] - baseline
             state[f'top{k}_normalized_gain'] = gain/gain_upper_bound
 
-class ChannelsReductionLayer(ChunkProcessor):
-    mode = ExperimentMode.ALL
-    def __init__(self, kernel_size=3, maxpool=True, batchnorm=True, padding='SAME', strides=1):
-        layers = [
-            tf.keras.layers.Conv2D(filters=3, kernel_size=kernel_size, padding=padding)
-        ]
-        if maxpool:
-            layers.append(
-                tf.keras.layers.MaxPool2D(padding=padding, strides=strides)
-            )
-        if batchnorm:
-            layers.append(
-                tf.keras.layers.BatchNormalization()
-            )
-        self.layers = tf.keras.models.Sequential(layers, "1layer")
-        # required for printing chunk processors
-        self.kernel_size = kernel_size
-        self.maxpool = maxpool
-        self.batchnorm = batchnorm
-        self.padding = padding
-        self.strides = strides
-    def __call__(self, chunk):
-        chunk['batch_input'] = self.layers(chunk['batch_input'])
-
-
-class NamedOutputs(ChunkProcessor):
-    def __call__(self, chunk):
-        chunk["predicted_diameter"] = chunk["batch_logits"][...,0]
-        chunk["predicted_is_ball"] = chunk["batch_logits"][...,1]
-        chunk["predicted_state"] = chunk["batch_logits"][...,2:]
-
 
 class StateClassificationLoss(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __init__(self, classes):
         self.classes = classes
     def __call__(self, chunk):
@@ -269,6 +302,7 @@ class StateClassificationLoss(ChunkProcessor):
 
 
 class CombineLosses(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __init__(self, names, weights):
         self.weights = weights
         self.names = names

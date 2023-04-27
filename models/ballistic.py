@@ -47,7 +47,7 @@ class Window(tuple):
         return self
     @cached_property
     def indices(self):
-        return [i for i, s in enumerate(self) if hasattr(s, 'ball') and hasattr(s, 'calib')]
+        return [i for i, s in enumerate(self) if s.ball is not None]
     @cached_property
     def timestamps(self):
         return np.array([self[i].timestamp for i in self.indices])
@@ -56,7 +56,13 @@ class Window(tuple):
         return Point3D([self[i].ball.center for i in self.indices])
     @cached_property
     def P(self):
-        return np.stack([self[i].calib.P for i in self.indices])
+        try:
+            return np.stack([self[i].calib.P for i in self.indices])
+        except:
+            print(self.indices)
+            for i in self.indices:
+                print(self[i].calib)
+            raise
     @cached_property
     def RT(self):
         return np.stack([np.hstack([self[i].calib.R, self[i].calib.T]) for i in self.indices])
@@ -261,7 +267,7 @@ class UseStateFilteredFitter2D(FilteredFitter2D):
     max_nonflyings_ratio: float = 0.8
     display: bool = False
     def __call__(self, window):
-        flyings_mask = np.array([hasattr(s, 'ball') and s.ball.state == BallState.FLYING for s in window])
+        flyings_mask = np.array([s.ball is not None and s.ball.state == BallState.FLYING for s in window])
         self.display and print("  "*window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, flyings_mask[i]] for i, s in enumerate(window)]), end="|\t")
 
         if sum(flyings_mask) < self.min_flyings:
@@ -301,7 +307,7 @@ class SlidingWindow(list):
             yield self.pop()
     @property
     def duration(self):
-        detection_timestamps = [item.timestamp for item in self if hasattr(item, "ball")]
+        detection_timestamps = [item.timestamp for item in self if item.ball is not None]
         if len(detection_timestamps) < 2:
             return 0
         return detection_timestamps[-1] - detection_timestamps[0]
@@ -362,8 +368,8 @@ class TrajectoryDetector:
                     self.display and print("validated")
                     # Set model
                     for sample in model.window:
-                        if hasattr(sample, 'ball'):
-                            camera_idx = [s.ball.camera for s in model.window if hasattr(s, 'ball')][0]
+                        if sample.ball is not None:
+                            camera_idx = [s.ball.camera for s in model.window if s.ball is not None][0]
                         else:
                             sample.timestamp = sample.timestamps[camera_idx]
                             sample.ball = Ball({
