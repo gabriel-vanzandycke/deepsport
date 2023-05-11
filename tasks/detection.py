@@ -33,6 +33,9 @@ class HeatmapDetectionExperiment(TensorflowExperiment):
         return {
             name:self.chunk[name] for name in outputs if name in self.chunk
         }
+    def train(self, *args, **kwargs):
+        self.cfg['testing_arena_labels'] = self.cfg['dataset_splitter'].testing_arena_labels
+        return super().train(*args, **kwargs)
 
 
 def divide(num: np.ndarray, den: np.ndarray):
@@ -317,7 +320,7 @@ class DetectBalls():
         for b, key in enumerate(keys):
             for i in range(K):
                 y, x = np.array(result['topk_indices'][b, 0, 0, i])
-                value = result['topk_outputs'][b, 0, 0, i].numpy()
+                value = float(result['topk_outputs'][b, 0, 0, i].numpy())
                 if value > self.detection_threshold:
                     calib = data["batch_calib"][b]
                     point = Point2D(x, y)
@@ -333,43 +336,29 @@ class DetectBalls():
                         continue # sanity check for detections that project behind the camera
                     ball.point = point # required to extract pseudo-annotations
                     if self.side_length is not None:
-                        batch_heatmap = result['batch_heatmap'][b].numpy()
+                        batch_heatmap = np.uint8(np.clip(result['batch_heatmap'][b].numpy()*255, 0, 255))
                         x_slice = slice(x-self.side_length//2, x+self.side_length//2, None)
                         y_slice = slice(y-self.side_length//2, y+self.side_length//2, None)
                         ball.heatmap = crop_padded(batch_heatmap, x_slice, y_slice, self.side_length//2+1)
                     yield (key, i), ball
 
 
-class DumpDetectedBallsFromInstants(DetectBalls):
-    def __init__(self, dataset_folder, filename, *args, **kwargs):
-        super.__init__(*args, **kwargs)
-        self.dataset_folder = dataset_folder
-        self.filename = filename
-        self.database = {}
-
-    def __call__(self, instant_key, instant):
-        filename = os.path.join(self.dataset_folder, instant_key.arena_label, str(instant_key.game_id), self.filename)
-
-        # Load existing database
-        database = pickle.load(open(filename, 'rb')) if os.path.isfile(filename) else {}
-
-        # Detect balls
-        detections = database.get(instant_key.timestamp, [])
-        detections = list(filter(lambda d: d.origin != self.name, detections)) # remove previous detections from given model
+class DetectBallsFromInstants(DetectBalls):
+    def __call__(self, instant_key, instant, database):
+        #detections = database.get(instant_key.timestamp, [])
+        #detections = list(filter(lambda d: d.origin != self.name, detections)) # remove previous detections from given model
 
         cameras = range(instant.num_cameras)
         offset = instant.offsets[1]
         data = {
             "batch_input_image": np.stack(instant.images),
-            "batch_input_image2": np.stack([instant.all_images[(c, offset)] for c in cameras])
+            "batch_input_image2": np.stack([instant.all_images[(c, offset)] for c in cameras]),
+            "batch_calib": np.array(instant.calibs),
         }
         keys = tuple((instant_key, c) for c in cameras)
-        detections.extend([kv[1] for kv in super.__call__(keys, data)])
+        #detections.extend([kv[1] for kv in super().__call__(keys, data)])
+        detections = [kv[1] for kv in super().__call__(keys, data)]
         database[instant_key.timestamp] = detections
-
-        # Save updated database
-        pickle.dump(database, open(filename, 'wb'))
-
         return instant
 
 
@@ -463,6 +452,7 @@ class ImportDetectionsTransform(Transform):
                 instant.annotations.extend([pseudo_annotation])
                 annotations = [pseudo_annotation]
                 instant.ball = pseudo_annotation
+        instant.annotations = annotations
 
         # Remove true positives
         if self.remove_true_positives and instant.ball:
