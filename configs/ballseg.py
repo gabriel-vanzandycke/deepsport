@@ -45,14 +45,19 @@ fold = 0
 dataset_splitter_str = "8folds"
 additional_keys_usage="skip"
 validation_pc = 0
+testing_arena_labels = None
 dataset_splitter = {
     "8folds": deepsport_utilities.ds.instants_dataset.dataset_splitters.KFoldsArenaLabelsTestingDatasetSplitter(8, 0, 1),
     "deepsport": deepsport_utilities.ds.instants_dataset.dataset_splitters.DeepSportDatasetSplitter(validation_pc=validation_pc, additional_keys_usage=additional_keys_usage),
     "GRAVELINES&STRASBOURG": deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(validation_pc=validation_pc, testing_arena_labels=['KS-FR-GRAVELINES', 'KS-FR-STRASBOURG']),
+    "testarena": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(validation_pc=validation_pc, testing_arena_labels=testing_arena_labels),
 }[dataset_splitter_str]
-dataset = mlwf.TransformedDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
+dataset = experimentator.CachedPickledDataset(find(dataset_name))
+dataset = mlwf.TransformedDataset(dataset, transforms)
 subsets = dataset_splitter(dataset, fold=fold)
-testing_arena_labels = dataset_splitter.testing_arena_labels # required (but KFoldsArenaLabelsTestingDatasetSplitter and DeepsportDatasetSplitter have this attribute set!)
+
+# Now set in `tasks.detection.HeatmapDetectionExperiment.train()`
+# testing_arena_labels = dataset_splitter.testing_arena_labels # required (but KFoldsArenaLabelsTestingDatasetSplitter and DeepsportDatasetSplitter have this attribute set!)
 
 
 
