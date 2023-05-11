@@ -16,28 +16,38 @@ from pyconfyg import Confyg
 from mlworkflow import TransformedDataset, FilteredDataset
 from deepsport_utilities import import_dataset
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, DownloadFlags, CropBlockDividable, AddCalibFactory
+from dataset_utilities.ds.balltracker_dataset import PairedBallTrackerInstantsDataset
 
-from tasks.detection import DumpDetectedBallsFromInstants, DetectBalls
+from tasks.detection import DetectBallsFromInstants, DetectBalls
 
 load_dotenv(find_dotenv(usecwd=True))
 
 parser = argparse.ArgumentParser(description="""
 Detect ball in Basketball Instants Dataset.""")
-parser.add_argument("detector", help="Detector name (sets ball 'origin' field)")
-parser.add_argument("version",  help="Detector version (sets file on which detection are saved")
+parser.add_argument("dataset", choices=['deepsport', 'balltracker'])
+parser.add_argument("detector", choices=['ballseg', 'pifball'], help="Detector name (sets ball 'origin' field)")
+parser.add_argument("version",  choices=['full', 'deepsport'], help="Detector version (sets file on which detection are saved")
 parser.add_argument("--workers", type=int, default=2)
-parser.add_argument("--data-augmentation", action="store_true", help="Use test-time data augmentation")
+parser.add_argument("--data-augmentation", action="store_true", help="Use test-time data augmentation (useful to generate many FP to train is_ball classification on)")
 parser.add_argument("--loop", type=int, default=1, help="Repetitions of the items")
-parser.add_argument("--side-length", type=int, default=256, help="Side length of heatmaps")
+parser.add_argument("--side-length", type=int, default=64, help="Side length of heatmaps")
 parser.add_argument("--k", type=int, default=4, help="Maximum number of detections to consider")
 args = parser.parse_args()
 
-dataset_folder = os.path.join(os.environ['LOCAL_STORAGE'], "basketball-instants-dataset")
+folder = {
+    "deepsport": "basketball-instants-dataset",
+    "balltracker": "BallTracker-dataset",
+}[args.dataset]
+dataset_folder = os.path.join(os.environ['LOCAL_STORAGE'], folder)
 dataset_config = {
     "download_flags": DownloadFlags.WITH_IMAGE | DownloadFlags.WITH_FOLLOWING_IMAGE | DownloadFlags.WITH_CALIB_FILE,
     "dataset_folder": dataset_folder
 }
-database_file = os.path.join(dataset_config['dataset_folder'], "basketball-instants-dataset.json")
+database = {
+    "deepsport": "basketball-instants-dataset.json",
+    "balltracker": "balltracker-dataset-full.json",
+}[args.dataset]
+database_file = os.path.join(dataset_config['dataset_folder'], database)
 
 experiment_ids = {
     "ballseg": {
@@ -58,10 +68,18 @@ filename = {
 
 def process(ds, config):
     ds = TransformedDataset(ds, [CropBlockDividable()])
-    detector = DumpDetectedBallsFromInstants(dataset_folder, name=args.detector, config=config, k=args.k, filename=filename, threshold=0, side_length=args.side_length)
-    for instant_key in tqdm(ds.yield_keys(), leave=False):
-        instant = ds.query_item(instant_key)
-        detector(instant_key, instant)
+    detector = DetectBallsFromInstants(name=args.detector, config=config, k=args.k, threshold=0, side_length=args.side_length)
+
+    keys = list(ds.keys)
+    for arena_label, game_id in tqdm(set([(k.arena_label, k.game_id) for k in keys])):
+        print("doing", arena_label, game_id, "...")
+        path = os.path.join(dataset_folder, arena_label, str(game_id), filename)
+        database = pickle.load(open(path, 'rb')) if os.path.isfile(path) else {}
+        for instant_key in tqdm(list([k for k in keys if k.game_id == game_id]), leave=False):
+            instant = ds.query_item(instant_key)
+            detector(instant_key, instant, database)
+
+        pickle.dump(database, open(path, 'wb'))
 
 
 
@@ -81,13 +99,16 @@ def process_model(experiment_id):
         with open(filename, 'wb') as f:
             pickle.dump(db, f)
     else:
-        arena_labels = Confyg(config).dict['testing_arena_labels']
+        testing_arena_labels = Confyg(config).dict['testing_arena_labels']
         ids = import_dataset(InstantsDataset, database_file, **dataset_config)
-        ds = FilteredDataset(ids, lambda k: k.arena_label in arena_labels)
+        if args.dataset == 'balltracker':
+            ids = PairedBallTrackerInstantsDataset(ids)
+        ds = FilteredDataset(ids, lambda k: any([arena_label in k.arena_label for arena_label in testing_arena_labels])) # supports "KS-FR-STRASBOURG-2018" in "KS-FR-STRASBOURG"
 
         keys_per_shape = defaultdict(list)
         for key in tqdm(ds.keys, leave=False, desc=f"Collecting shapes for {experiment_id}"):
-            keys_per_shape[ds.query_item(key).images[0].shape].append(key)
+            get_shape = lambda calib: (calib.width, calib.height)
+            keys_per_shape[get_shape(ds.query_item(key).calibs[0])].append(key)
 
         for shape, keys in tqdm(keys_per_shape.items(), leave=False, desc=f"Processing shapes of {experiment_id}"):
             print(f"Processing {len(keys)} items with shape {shape} with {experiment_id}", flush=True)
