@@ -2,14 +2,14 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
 import os
-import pickle
 from typing import NamedTuple
 import typing
 
 import numpy as np
 from calib3d import Point2D
-import tensorflow as tf
 import pandas
+import sklearn.metrics
+import tensorflow as tf
 
 from experimentator import ExperimentMode, ChunkProcessor, Subset, Callback, build_experiment
 from experimentator.tf2_experiment import TensorflowExperiment
@@ -25,9 +25,15 @@ from tasks.classification import ComputeClassifactionMetrics as _ComputeClassifa
 
 class StateOnlyBalancer():
     def __init__(self, cfg):
-        self.classes = list(cfg['classes']) # makes a copy
-        self.classes.remove(BallState.NONE)
-        self.get_class = lambda k,v: v['ball_state']
+        #self.classes = list(cfg['state_mapping'].keys()) # makes a copy
+        self.classes = list(range(len(cfg['state_mapping'][1]))) # Tout ceci est dégeuh. à cleaner dès que je sais quel nstate choisir
+        try:
+            self.classes.remove(BallState.NONE)
+        except ValueError:
+            pass
+        #print(self.classes)
+        #raise
+        self.get_class = lambda k,v: np.where(v['ball_state'])[0][0] # returns the index in state_mapping that is 1
         self.dataset_name = cfg['dataset_name']
 
     @cached_property
@@ -68,30 +74,6 @@ class BallStateClassification(TensorflowExperiment):
             yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
 
 
-class TwoTasksBalancer():
-    def __init__(self, cfg):
-        self.classes = [str(c) for c in cfg['classes'] if c != BallState.NONE]
-        self.classes.extend(['ball_annotation', 'ball_interpolation', 'noball', 'other'])
-        self.dataset_name = cfg['dataset_name']
-
-    @cached_property
-    def cache(self):
-        if filename := find(f"{self.dataset_name}.classes_cache.pickle", fail=False):
-            with open(filename, "rb") as f:
-                return pickle.load(f)
-        return {}
-
-    @staticmethod
-    def get_class(k,v):
-        trusted_origins = ['annotation', 'interpolation']
-        if v['ball'].origin in trusted_origins:
-            return 'ball_' + v['ball'].origin
-        if v['ball_state'] != BallState.NONE:
-            return str(v['ball_state'])
-        if v['is_ball'] == 0:
-            return 'noball'
-        return 'other'
-
 class BallStateAndBallSizeExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_input_image", "batch_input_image2",
                           "batch_is_ball", "batch_ball_size", "batch_ball_state"]
@@ -101,10 +83,10 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
 
     @cached_property
     def balancer(self):
-        return self.cfg['balancer'](self.cfg)
+        return self.cfg['balancer'](self.cfg) if self.cfg['balancer'] else None
 
     def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
-        if subset.type == SubsetType.EVAL:
+        if subset.type == SubsetType.EVAL or self.balancer is None:
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
             batch_size = batch_size or self.batch_size
@@ -143,9 +125,58 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
                         if self.cfg.get('freeze_ballsize', False):
                             cp.model.trainable = False
                         break
-        elif self.cfg.get('freeze_ballsize', False):
+        elif self.cfg.get('freeze_ballsize', False) is True:
             raise ValueError("Cannot freeze ballsize weights if no experiment_id is provided")
+
         return chunk
+
+    def save_weights(self, *args, **kwargs):
+        folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", self.cfg['experiment_id'])
+        if self.cfg['nstates']:
+            for cp in self.chunk_processors:
+                if hasattr(cp, "model") and cp.model.name == 'classification_head':
+                    filename = os.path.join(folder, "classification_head")
+                    cp.model.save_weights(filename)
+                    break
+        else:
+            super().save_weights(*args, **kwargs)
+
+    def load_weights(self, *args, **kwargs):
+        experiment_id = self.cfg.get('experiment_id', os.path.basename(os.path.dirname(self.cfg["filename"])))
+        folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
+        if self.cfg['nstates']:
+            for cp in self.chunk_processors:
+                if hasattr(cp, "model") and cp.model.name == 'classification_head':
+                    filename = os.path.join(folder, "classification_head")
+                    cp.model.load_weights(filename)
+                    break
+        else:
+            super().load_weights(*args, **kwargs)
+
+
+
+@dataclass
+class StateFLYINGMetrics(Callback):
+    before = ["GatherCycleMetrics"]
+    when = ExperimentMode.EVAL
+    def on_cycle_begin(self, **_):
+        self.acc = {'true': [], 'pred': []}
+    def on_batch_end(self, **state):
+        _, C = state['predicted_state'].shape
+        for predicted_state, target_state in zip(state['predicted_state'], state['batch_ball_state']):
+            self.acc['pred'].append(float(predicted_state[1] if C > 1 else predicted_state[0]))
+            self.acc['true'].append(float(target_state[1] if C > 1 else target_state[0]))
+    def on_cycle_end(self, state, **_):
+        P, R, T = sklearn.metrics.precision_recall_curve(self.acc['true'], self.acc['pred'])
+        state[f"{str(BallState.FLYING)}_prc"] = pandas.DataFrame(np.vstack([P[:-1], R[:-1], T]).T, columns=['precision', 'recall', 'thresholds'])
+        state[f"{str(BallState.FLYING)}_auc"] = sklearn.metrics.auc(R, P)
+
+
+class AddSingleBallStateFactory(Transform):
+    def __call__(self, view_key, view):
+        predicate = lambda ball: view.calib.projects_in(ball.center) and ball.visible is not False and ball.state == BallState.FLYING
+        return {"ball_state": [1] if predicate(view.ball) else [0]}
+
 
 class AddBallSizeFactory(Transform):
     def __call__(self, view_key, view):
@@ -293,12 +324,11 @@ class TopkNormalizedGain(Callback):
 
 class StateClassificationLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
-    def __init__(self, classes):
-        self.classes = classes
     def __call__(self, chunk):
-        batch_target = tf.one_hot(chunk['batch_ball_state'], len(self.classes))
-        loss = tf.keras.losses.binary_crossentropy(batch_target, chunk["predicted_state"], from_logits=True)
-        chunk["state_loss"] = tf.reduce_mean(loss)
+        loss = tf.keras.losses.binary_crossentropy(chunk["batch_ball_state"], chunk["predicted_state"], from_logits=True)
+        if len(loss.shape) > 1: # if BallState.NONE class is used, avoid computing loss for it
+            loss = loss[:,1:]
+        chunk["loss"] = chunk["state_loss"] = tf.reduce_mean(loss)
 
 
 class CombineLosses(ChunkProcessor):
