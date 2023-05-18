@@ -9,7 +9,7 @@ import pandas
 import tensorflow as tf
 
 from calib3d import Point2D, Point3D
-from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics
+from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics, GaussianBlur
 
 from deepsport_utilities.transforms import Transform
 from deepsport_utilities.ds.instants_dataset import Ball, BallState, InstantKey
@@ -164,7 +164,7 @@ class AuC(Callback):
 
 class ComputeKeypointsDetectionHitmap(ChunkProcessor):
     mode = ExperimentMode.EVAL | ExperimentMode.INFER
-    def __init__(self, non_max_suppression_pool_size=50, threshold=DEFAULT_THRESHOLDS):
+    def __init__(self, non_max_suppression_pool_size=50, fast=True, threshold=DEFAULT_THRESHOLDS):
         if isinstance(threshold, np.ndarray):
             thresholds = threshold
         elif isinstance(threshold, list):
@@ -179,7 +179,7 @@ class ComputeKeypointsDetectionHitmap(ChunkProcessor):
         self.non_max_suppression_pool_size = non_max_suppression_pool_size
         self.threshold = threshold
 
-        self.avoid_local_eq = AvoidLocalEqualities()
+        self.avoid_local_eq = AvoidLocalEqualities() if fast else GaussianBlur(30, 7)
         self.peak_local_max = PeakLocalMax(min_distance=non_max_suppression_pool_size//2, thresholds=thresholds)
 
     def __call__(self, chunk):
@@ -278,7 +278,7 @@ BALLSEG_THRESHOLD = 0.6
 
 
 class ExtractGlimpse(ChunkProcessor):
-    def __init__(self, oracle, side_length):
+    def __init__(self, side_length, oracle=False):
         self.oracle = oracle
         self.side_length = side_length
 
@@ -296,7 +296,9 @@ class ExtractGlimpse(ChunkProcessor):
                 size=(self.side_length, self.side_length), offsets=offsets(k), centered=False, normalized=False, noise='zero'
             ) for k in ks
         ], 1)
-        chunk["batch_input_image"] = tf.reshape(chunk["batch_input_image"], [-1, self.side_length, self.side_length, 3])
+        print(chunk["batch_input_image"].shape)
+        raise
+        #chunk["batch_input_image"] = tf.reshape(chunk["batch_input_image"], [-1, self.side_length, self.side_length, 3])
 
         chunk["batch_heatmap"] = tf.stack([
             tf.image.extract_glimpse(
@@ -304,13 +306,20 @@ class ExtractGlimpse(ChunkProcessor):
                 size=(self.side_length, self.side_length), offsets=offsets(k), centered=False, normalized=False, noise='zero'
             ) for k in ks
         ], 1)
-        chunk["batch_heatmap"] = tf.reshape(chunk["batch_heatmap"], [-1, self.side_length, self.side_length])
+        #chunk["batch_heatmap"] = tf.reshape(chunk["batch_heatmap"], [-1, self.side_length, self.side_length])
 
 
 
 class DetectBalls():
     def __init__(self, config, name, threshold=0, side_length=None, **kwargs):
         self.exp = build_experiment(config, **kwargs)
+
+        for cp in self.exp.chunk_processors:
+            if isinstance(cp, ComputeKeypointsDetectionHitmap):
+                print("Found ComputeKeypointsDetectionHitmap")
+                cp.avoid_local_eq = GaussianBlur(30, 7)
+                break
+
         self.detection_threshold = threshold
         self.name = name
         self.side_length = side_length
@@ -365,7 +374,8 @@ class DetectBallsFromInstants(DetectBalls):
 class ImportDetectionsTransform(Transform):
     def __init__(self, dataset_folder, filename, proximity_threshold=15,
                  estimate_pseudo_annotation=True, remove_true_positives=True,
-                 remove_duplicates=False, transfer_true_position=False):
+                 remove_duplicates=False, transfer_true_position=False,
+                 exclusive=True):
         self.dataset_folder = dataset_folder
         self.filename = filename
         self.proximity_threshold = proximity_threshold # pixels
@@ -373,6 +383,7 @@ class ImportDetectionsTransform(Transform):
         self.remove_duplicates = remove_duplicates
         self.estimate_pseudo_annotation = estimate_pseudo_annotation
         self.transfer_true_position = transfer_true_position
+        self.exclusive = exclusive
         self.database = {}
 
     def extract_pseudo_annotation(self, detections: Ball, ball_state=BallState.NONE):
@@ -463,6 +474,9 @@ class ImportDetectionsTransform(Transform):
         if self.remove_duplicates and detections:
             detections = self.keep_unique_detections(instant.calibs, detections)
 
-        instant.detections = getattr(instant, "detections", [])
-        instant.detections.extend(detections)
+        if self.exclusive:
+            instant.detections = detections
+        else:
+            instant.detections = getattr(instant, "detections", [])
+            instant.detections.extend(detections)
         return instant
