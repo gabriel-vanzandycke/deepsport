@@ -78,6 +78,7 @@ callbacks = [
     experimentator.LearningRateDecay(start=decay_start, duration=10, factor=0.1),
 ]
 
+fast_nms = True
 globals().update(locals()) # required to use 'tf' in lambdas
 chunk_processors = [
     experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_input_image2", "batch_target"]),
@@ -90,11 +91,11 @@ chunk_processors = [
     models.icnet.ICNetHead(num_classes=1),
     experimentator.tf2_chunk_processors.SigmoidCrossEntropyLoss(),
     lambda chunk: chunk.update({"batch_heatmap": tf.nn.sigmoid(chunk["batch_logits"])}),
-    tasks.detection.ComputeKeypointsDetectionHitmap(non_max_suppression_pool_size=size_max*2),
+    tasks.detection.ComputeKeypointsDetectionHitmap(non_max_suppression_pool_size=size_max*2, fast=fast_nms),
     tasks.detection.ConfidenceHitmap(),
     tasks.detection.ComputeTopK(k=k),
     tasks.detection.EnlargeTarget(int(size_min/2)),
-    tasks.detection.ComputeKeypointsTopKDetectionMetrics()
+    tasks.detection.ComputeKeypointsTopKDetectionMetrics(),
 ]
 
 learning_rate   = 1e-3
