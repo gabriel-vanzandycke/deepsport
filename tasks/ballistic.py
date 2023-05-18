@@ -13,7 +13,6 @@ from models.ballistic import FITTED_BALL_ORIGIN
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
 
 
-
 def compute_projection_error(true_center: Point3D, pred_center: Point3D):
     difference = true_center - pred_center
     difference.z = 0 # set z coordinate to 0 to compute projection error on the ground
@@ -33,7 +32,7 @@ class ComputeSampleMetrics:
             if sample.ball is not None:
                 if hasattr(sample.ball, 'model'):
                     if sample.ball_state == BallState.FLYING \
-                     and (not self.min_duration_TP or sample.ball.model.window.duration >= self.min_duration): # new here
+                     and (not self.min_duration_TP or sample.ball.model.window.duration >= self.min_duration):
                         self.TP += 1
                     elif sample.ball_state != BallState.NONE \
                      and sample.ball.model.window.duration >= self.min_duration:
@@ -45,14 +44,15 @@ class ComputeSampleMetrics:
                         self.FN += 1
                     elif sample.ball_state != BallState.NONE:
                         self.TN += 1
-                true_balls = [a for a in getattr(sample, 'ball_annotations', []) if a.origin in ['interpolation', 'annotation']]
+                true_balls = [a for a in sample.ball_annotations if a.origin in ['interpolation', 'annotation']]
                 if true_balls:
                     true_center = true_balls[0].center
                     if hasattr(sample.ball, 'model'):
                         error = compute_projection_error(true_center, sample.ball.model(sample.timestamp))
-                        self.ballistic_restricted_MAPE.append(error)
                     else:
                         error = compute_projection_error(true_center, sample.ball.center)
+                    if sample.ball_state == BallState.FLYING:
+                        self.ballistic_restricted_MAPE.append(error)
                     self.ballistic_all_MAPE.append(error)
                     if sample.ball.origin != FITTED_BALL_ORIGIN:
                         self.detections_MAPE.append(compute_projection_error(true_center, sample.ball.center))
@@ -205,8 +205,8 @@ class MatchTrajectories:
             # skip samples without valid ball model
             if sample.ball is None \
             or not hasattr(sample.ball, 'model') \
-            or sample.ball.model is None \
-            or not isinstance(getattr(sample.ball.model, "mark", ModelMarkAccepted()), ModelMarkAccepted):
+            or sample.ball.model is None:
+            #or not isinstance(getattr(sample.ball.model, "mark", ModelMarkAccepted()), ModelMarkAccepted):
                 self.predictions.append(0)
                 continue
 
