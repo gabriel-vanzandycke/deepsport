@@ -325,18 +325,23 @@ class DetectBalls():
         self.side_length = side_length
     def __call__(self, keys, data):
         result = self.exp.predict(data)
-        B, _, _, K = result['topk_outputs'].shape
-        for b, key in enumerate(keys):
+        B = len(data['batch_calib'])
+        W = data['batch_input_image'].shape[2]//B
+        _, _, _, K = result['topk_outputs'].shape
+        #for b, key in enumerate(keys):
+        for b in [0]:
             for i in range(K):
                 y, x = np.array(result['topk_indices'][b, 0, 0, i])
+                camera_index = x // W
+                x = x % W
                 value = float(result['topk_outputs'][b, 0, 0, i].numpy())
                 if value > self.detection_threshold:
-                    calib = data["batch_calib"][b]
+                    calib = data["batch_calib"][camera_index]
                     point = Point2D(x, y)
                     ball = Ball({
                         "origin": self.name,
                         "center": calib.project_2D_to_3D(point, Z=0),
-                        "image": b,
+                        "image": camera_index,
                         "visible": True, # visible enough to have been detected by a detector
                         "value": value,
                         "state": data['batch_ball_state'][b] if 'batch_ball_state' in data else BallState.NONE,
@@ -345,11 +350,12 @@ class DetectBalls():
                         continue # sanity check for detections that project behind the camera
                     ball.point = point # required to extract pseudo-annotations
                     if self.side_length is not None:
+                        raise NotImplementedError("stitched image not implemented here yet")
                         batch_heatmap = np.uint8(np.clip(result['batch_heatmap'][b].numpy()*255, 0, 255))
                         x_slice = slice(x-self.side_length//2, x+self.side_length//2, None)
                         y_slice = slice(y-self.side_length//2, y+self.side_length//2, None)
                         ball.heatmap = crop_padded(batch_heatmap, x_slice, y_slice, self.side_length//2+1)
-                    yield (key, i), ball
+                    yield (keys[camera_index], i), ball
 
 
 class DetectBallsFromInstants(DetectBalls):
@@ -360,8 +366,8 @@ class DetectBallsFromInstants(DetectBalls):
         cameras = range(instant.num_cameras)
         offset = instant.offsets[1]
         data = {
-            "batch_input_image": np.stack(instant.images),
-            "batch_input_image2": np.stack([instant.all_images[(c, offset)] for c in cameras]),
+            "batch_input_image": np.hstack(instant.images)[None],
+            "batch_input_image2": np.hstack([instant.all_images[(c, offset)] for c in cameras])[None],
             "batch_calib": np.array(instant.calibs),
         }
         keys = tuple((instant_key, c) for c in cameras)

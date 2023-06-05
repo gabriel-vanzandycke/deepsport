@@ -11,45 +11,51 @@ import wandb
 from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
 
-from tasks.ballistic import MatchTrajectories, ComputeSampleMetrics#SelectBall,
-from models.ballistic import TrajectoryDetector, UseStateFilteredFitter2D, FilteredFitter2D, Fitter2D
+from tasks.ballistic import TrajectoryBasedEvaluation, SampleBasedEvaluation#, PickDetection#SelectBall,
+from models.ballistic import TrajectoryDetector, FilterBallStateSolution, InliersFiltersSolution, PositionAndDiameterFitter2D, FilterInliers, PositionFitter2D, FirstPositionNullSpeedSolution
 
 dotenv.load_dotenv()
 
 parameters = {
     "min_inliers":             ("suggest_int",   {'low':  2, 'high':   8, 'step':  1}),
-    "max_outliers_ratio":      ("suggest_float", {'low': .1, 'high':  .9, 'step': .1}),
-    "min_flyings":             ("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
+    "max_outliers_ratio":      ("suggest_float", {'low': .0, 'high':  .9, 'step': .1}),
+    "min_flyings":             ('fixed', 1),#("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
     "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':   1, 'step': .1}),
     #"max_inliers_decrease": ('fixed', .1),#("suggest_float", {'low':  0, 'high':  .2, 'step':.05}),
-    "scale":                   ("suggest_float", {'low': -2, 'high':   2, 'step': .5}),
     "position_error_threshold":("suggest_int",   {'low':  1, 'high':  10, 'step':  1}),
     "d_error_weight":          ("suggest_int",   {'low':  0, 'high': 100, 'step': 10}),
-    "min_distance_cm":         ("suggest_int",   {'low': 50, 'high': 200, 'step': 50}),
-    "min_distance_px":         ("suggest_int",   {'low': 50, 'high': 200, 'step': 50}),
-    "min_window_length":       ("suggest_int",   {'low':160, 'high': 350, 'step': 10}),
-    "first_inlier":            ("suggest_int",   {'low':  1, 'high':   4, 'step':  1}),
+    "min_distance_cm":         ("fixed", 100),#  {'low': 50, 'high': 200, 'step': 50}),
+    "min_distance_px":         ("fixed", 100),#  {'low': 50, 'high': 200, 'step': 50}),
+    "min_window_length":       ("suggest_int",   {'low':160, 'high': 450, 'step': 10}),
+    "first_inlier":            ('fixed', 1),#("suggest_int",   {'low':  1, 'high':   4, 'step':  1}),
+    "retries":                 ("suggest_int",   {'low':  0, 'high':   4, 'step':  1}),
+    "ftol":                    ("suggest_float", {'low':  1e-6, 'high':  100, 'log': True}),
+    "xtol":                    ("suggest_float", {'low':  1e-6, 'high':  100, 'log': True}),
+    "gtol":                    ("suggest_float", {'low':  1e-6, 'high':  100, 'log': True}),
+    "tol":                     ("suggest_float", {'low':  1e-6, 'high':  100, 'log': True}),
+    "distance_threshold":      ("suggest_float", {'low':  1, 'high':  20, 'step':  1}),
 }
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="""""")
     parser.add_argument("positions_dataset")
     parser.add_argument("--name", default='')
-    parser.add_argument("--method", default='baseline', choices=['baseline', 'usestate'])
+    parser.add_argument("--method", default='baseline', choices=['baseline', 'usestate', 'twostages'])
     parser.add_argument("--min-duration", type=int, default=250)
-    parser.add_argument("--min-duration-TP", action='store_true', default=False)
     parser.add_argument("--n-trials", type=int, default=100)
     parser.add_argument("--show-progress", action='store_true', default=False)
     parser.add_argument("--kwargs", nargs='*', default=[])
     parser.add_argument("--skip-wandb", action='store_true', default=False)
+    parser.add_argument("--start", type=int, default=0)
     args = parser.parse_args()
 
     cast = lambda k, v: (k, eval(v))
     fixed_kwargs = dict([cast(*kwarg.split('=')) for kwarg in args.kwargs])
 
     objectives = {
-        's_precision': 'maximize',
-        's_recall': 'maximize',
+        'trajectory_sample_precision': 'maximize',
+        'trajectory_sample_recall': 'maximize',
+        'sample_ballistic_restricted_MAPE': 'minimize',
     }
 
     if args.method == 'baseline':
@@ -57,8 +63,9 @@ if __name__ == '__main__':
             del parameters[name]
 
     fitter_types = {
-        'baseline': (FilteredFitter2D, Fitter2D),
-        'usestate': (UseStateFilteredFitter2D, FilteredFitter2D, Fitter2D)
+        #'baseline': (FilteredFitter2D, Fitter2D),
+        #'usestate': (UseStateFilteredFitter2D, FilteredFitter2D, Fitter2D)
+        'twostages': (FilterBallStateSolution, InliersFiltersSolution, PositionAndDiameterFitter2D, FilterInliers, PositionFitter2D, FirstPositionNullSpeedSolution)
     }[args.method]
 
     progress_wrapper = tqdm if args.show_progress else lambda x: x
@@ -78,7 +85,8 @@ if __name__ == '__main__':
         for name, (suggest_fct, params) in parameters.items():
             if name not in kwargs:
                 if suggest_fct == 'fixed':
-                    kwargs.update({name: params})
+                    value = params if isinstance(params, (int, float)) else params['low']
+                    kwargs.update({name: value})
                 else:
                     kwargs.update({name: getattr(trial, suggest_fct)(name, **params)})
 
@@ -92,20 +100,20 @@ if __name__ == '__main__':
 
         # Process sequence
         dds = PickledDataset(find(args.positions_dataset))
-        #dds = TransformedDataset(dds, [SelectBall('ballseg')])
-        gen = (dds.query_item(k) for k in progress_wrapper(sorted(dds.keys)))
+        agen = (dds.query_item(k) for i, k in enumerate(sorted(dds.keys)) if i >= args.start)
+        pgen = (dds.query_item(k) for i, k in enumerate(sorted(dds.keys)) if i >= args.start)
         sw = TrajectoryDetector(fitter_types, **kwargs)
-        compare = ComputeSampleMetrics(min_duration=args.min_duration, min_duration_TP=args.min_duration_TP)
-        for sample in compare(sw(gen)):
-            pass
+        compare = SampleBasedEvaluation(min_duration=args.min_duration)
+        mt = TrajectoryBasedEvaluation(args.min_duration, None)
+        mt(agen, compare(sw(pgen)))
 
-        # Log metrics
-        for key, value in compare.metrics.items():
+        metrics = {prefix+key: value for prefix, data in [('sample_', compare.metrics), ('trajectory_', mt.metrics)] for key, value in data.items()}
+        for key, value in metrics.items():
             trial.set_user_attr(key, value)
-        wandb.log(compare.metrics)
+        wandb.log(metrics)
 
         # Return objectives
-        values = tuple(compare.metrics[name] for name in objectives)
+        values = tuple(metrics[name] for name in objectives)
         if np.any(np.isnan(values)):
             raise optuna.TrialPruned()
         return values

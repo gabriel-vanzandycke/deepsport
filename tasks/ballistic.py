@@ -7,7 +7,6 @@ import numpy as np
 
 from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState
-from models.ballistic import FITTED_BALL_ORIGIN
 
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
@@ -19,26 +18,23 @@ def compute_projection_error(true_center: Point3D, pred_center: Point3D):
     return np.linalg.norm(difference, axis=0)
 
 @dataclass
-class ComputeSampleMetrics:
-    min_duration: int = 250 # ballistic model shorter than `min_duration` (in miliseconds) won't be counted as FP
-    min_duration_TP: bool = False # if True, ballistic model shorter than `min_duration` (in miliseconds) won't be counted as TP
+class SampleBasedEvaluation:
+    min_duration: int = 250        # ballistic model shorter than `min_duration` (in miliseconds) won't be counted as FP
     def __post_init__(self):
-        self.TP = self.FP = self.FN = self.TN = self.interpolated = 0
-        self.ballistic_all_MAPE = []         # MAPE between GT and ballistic models or detections if no ballistic model is found
+        self.TP = self.FP = self.FN = self.TN = 0
+        self.ballistic_MAPE = []         # MAPE between GT and ballistic models or detections if no ballistic model is found
         self.ballistic_restricted_MAPE = []  # MAPE between GT and detected ballistic models
         self.detections_MAPE = []            # MAPE between GT and all original detections
     def __call__(self, gen):
-        for i, sample in enumerate(gen):
+        for sample in gen:
             if sample.ball is not None:
-                if hasattr(sample.ball, 'model'):
+                if hasattr(sample, 'model'):
                     if sample.ball_state == BallState.FLYING \
-                     and (not self.min_duration_TP or sample.ball.model.window.duration >= self.min_duration):
+                     and sample.model.window.duration >= self.min_duration:
                         self.TP += 1
                     elif sample.ball_state != BallState.NONE \
-                     and sample.ball.model.window.duration >= self.min_duration:
+                     and sample.model.window.duration >= self.min_duration:
                         self.FP += 1
-                    if sample.ball.origin == FITTED_BALL_ORIGIN:
-                        self.interpolated += 1
                 else:
                     if sample.ball_state == BallState.FLYING:
                         self.FN += 1
@@ -47,15 +43,15 @@ class ComputeSampleMetrics:
                 true_balls = [a for a in sample.ball_annotations if a.origin in ['interpolation', 'annotation']]
                 if true_balls:
                     true_center = true_balls[0].center
-                    if hasattr(sample.ball, 'model'):
-                        error = compute_projection_error(true_center, sample.ball.model(sample.timestamp))
+                    detection_error = compute_projection_error(true_center, sample.ball.center)
+                    if hasattr(sample, 'model'):
+                        error = compute_projection_error(true_center, sample.model(sample.timestamp))
                     else:
-                        error = compute_projection_error(true_center, sample.ball.center)
+                        error = detection_error
                     if sample.ball_state == BallState.FLYING:
                         self.ballistic_restricted_MAPE.append(error)
-                    self.ballistic_all_MAPE.append(error)
-                    if sample.ball.origin != FITTED_BALL_ORIGIN:
-                        self.detections_MAPE.append(compute_projection_error(true_center, sample.ball.center))
+                    self.ballistic_MAPE.append(error)
+                    self.detections_MAPE.append(detection_error)
             yield sample
     @property
     def metrics(self):
@@ -64,13 +60,11 @@ class ComputeSampleMetrics:
             "TP": self.TP,
             "FP": self.FP,
             "FN": self.FN,
-            "TN": self.TN,
-            "ballistic_all_MAPE": mean(self.ballistic_all_MAPE),
+            "ballistic_MAPE": mean(self.ballistic_MAPE),
             "ballistic_restricted_MAPE": mean(self.ballistic_restricted_MAPE),
             "detections_MAPE": mean(self.detections_MAPE),
-            "interpolated": self.interpolated,
-            's_precision': self.TP / (self.TP + self.FP) if self.TP > 0 else 0,
-            's_recall': self.TP / (self.TP + self.FN) if self.TP > 0 else 0,
+            'precision': self.TP / (self.TP + self.FP) if self.TP > 0 else 0,
+            'recall': self.TP / (self.TP + self.FN) if self.TP > 0 else 0,
         }
 
 
@@ -95,89 +89,62 @@ class Trajectory:
     def __len__(self):
         return self.end_key.timestamp - self.start_key.timestamp
 
-
-
-
-class MatchTrajectories:
-    # compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
+class TrajectoryBasedEvaluation:
     def __init__(self, min_duration=250, callback=None):
-        warnings.warn("not implemented: compute MAPE, MARE, MADE if ball 3D position was annotated for FP when splitted as well.")
+        self.min_duration = min_duration
+        self.callback = callback or (lambda a, p, t: None)
         self.TP = []
         self.FP = []
         self.FN = []
         self.dist_T0 = []
         self.dist_TN = []
-        self.callback = callback or (lambda a, p, t: None)
         self.annotations = []
         self.predictions = []
-        self.min_duration = min_duration
-        self.detections_MAPE = []
-        self.ballistic_MAPE = []
-        self.recovered = []
         self.splitted_predicted_trajectories = 0
         self.splitted_annotated_trajectories = 0
         self.overlap = []
         self.union = []
         self.intersection = []
-        self.s_TP = 0
-        self.s_FP = 0
-        self.s_FN = 0
+        self.s_FP = self.s_FN = self.s_TP = 0
 
-
-    def compute_samples_TP_FP_FN(self, a, p):
-        samples = {sample.key: sample for sample in p.samples} if p else {}
-
-        annotated_trajectory_samples = set([sample.key for sample in a.samples]) if a else set([])
-        predicted_trajectory_samples = set([sample.key for sample in p.samples]) if p else set([])
-        self.s_TP += len(annotated_trajectory_samples.intersection(predicted_trajectory_samples))
-        self.s_FN += len(annotated_trajectory_samples.difference(predicted_trajectory_samples))
-        s_FP = predicted_trajectory_samples.difference(annotated_trajectory_samples)
-        self.s_FP += len([k for k in s_FP if samples[k].ball_state != BallState.NONE])
+    def compute_sample_metrics(self, a, p):
+        annotations = {s.key for s in a.samples} if a else set()
+        predictions = {s.key for s in p.samples} if p else set()
+        self.s_FP += len(predictions - annotations)
+        self.s_FN += len(annotations - predictions)
+        self.s_TP += len(annotations & predictions)
 
     def TP_callback(self, a, p):
         self.TP.append((a.trajectory_id, p.trajectory_id))
         self.dist_T0.append(p.start_key.timestamp - a.start_key.timestamp)
         self.dist_TN.append(p.end_key.timestamp - a.end_key.timestamp)
-        self.recovered.append(len([s for s in p.samples if s.ball.origin == FITTED_BALL_ORIGIN]))
         self.overlap.append(a - p)
         self.intersection.append(a - p)
         self.union.append(a + p)
-        self.compute_samples_TP_FP_FN(a, p)
-
-        # compute MAPE, MARE, MADE if ball 3D position was annotated
-        if any([s.ball_annotations and np.abs(s.ball_annotations[0].center.z) > 0.1 for s in a.samples]):
-            annotated_trajectory_samples = {s.key: s for s in a.samples if s.ball_annotations}
-            predicted_trajectory_samples = {s.key: s for s in p.samples if s.ball.origin is not FITTED_BALL_ORIGIN}
-            keys = set(annotated_trajectory_samples.keys()) & set(predicted_trajectory_samples.keys())
-            detected_ball3D =  Point3D([predicted_trajectory_samples[k].ball.center for k in keys])
-            annotated_ball3D = Point3D([annotated_trajectory_samples[k].ball_annotations[0].center for k in keys])
-            ballistic_ball3D = Point3D([predicted_trajectory_samples[k].ball.model(predicted_trajectory_samples[k].timestamp) for k in keys])
-            self.detections_MAPE.extend(compute_projection_error(annotated_ball3D, detected_ball3D))
-            self.ballistic_MAPE.extend(compute_projection_error(annotated_ball3D, ballistic_ball3D))
-
+        self.compute_sample_metrics(a, p)
         self.callback(a, p, 'TP')
 
     def FN_callback(self, a, p):
+        self.compute_sample_metrics(a, None)
         if p is not None:
             self.intersection.append(a - p)
             self.union.append(a + p)
         else:
             self.union.append(len(a))
         self.splitted_annotated_trajectories += (1 if p is not None else 0)
-        self.compute_samples_TP_FP_FN(a, p)
         if len(a) < self.min_duration:
             return
         self.FN.append(a.trajectory_id)
         self.callback(a, p, 'FN')
 
     def FP_callback(self, a, p):
+        self.compute_sample_metrics(None, p)
         if a is not None:
             self.intersection.append(a - p)
             self.union.append(a + p)
         else:
             self.union.append(len(p))
         self.splitted_predicted_trajectories += (1 if a is not None else 0)
-        self.compute_samples_TP_FP_FN(a, p)
         if len(p) < self.min_duration:
             return
         self.FP.append(p.trajectory_id)
@@ -185,40 +152,36 @@ class MatchTrajectories:
 
     def extract_annotated_trajectories(self, gen):
         trajectory_id = 1
-        samples = []
+        trajectory_samples = []
         for sample in gen:
             if sample.ball_state == BallState.FLYING:
                 self.annotations.append(trajectory_id)
-                samples.append(sample)
+                trajectory_samples.append(sample)
             else:
                 self.annotations.append(0)
-                if samples:
-                    yield Trajectory(samples, trajectory_id)
+                if trajectory_samples:
+                    yield Trajectory(trajectory_samples, trajectory_id)
                     trajectory_id += 1
-                samples = []
+                trajectory_samples = []
 
     def extract_predicted_trajectories(self, gen):
         trajectory_id = 1
         model = None
-        samples = []
+        trajectory_samples = []
         for sample in gen:
-            # skip samples without valid ball model
-            if sample.ball is None \
-            or not hasattr(sample.ball, 'model') \
-            or sample.ball.model is None:
-            #or not isinstance(getattr(sample.ball.model, "mark", ModelMarkAccepted()), ModelMarkAccepted):
+            new_model = getattr(sample, 'model', None)
+            if new_model != model:
+                if model:
+                    yield Trajectory(trajectory_samples, trajectory_id)
+                    trajectory_id += 1
+                    trajectory_samples = []
+                model = new_model
+
+            if new_model:
+                self.predictions.append(trajectory_id)
+                trajectory_samples.append(sample)
+            else:
                 self.predictions.append(0)
-                continue
-
-            # if model changed, yield previous trajectory
-            if sample.ball.model != model and model is not None:
-                yield Trajectory(samples, trajectory_id)
-                trajectory_id += 1
-                samples = []
-
-            model = sample.ball.model
-            samples.append(sample)
-            self.predictions.append(trajectory_id)
 
     def __call__(self, agen, pgen):
         pgen = self.extract_predicted_trajectories(pgen)
@@ -279,7 +242,6 @@ class MatchTrajectories:
             'TP': len(self.TP),
             'FP': len(self.FP),
             'FN': len(self.FN),
-            'recovered': sum(self.recovered),
             'overlap': sum(self.overlap),
             'mean_dist_T0': mean(self.dist_T0),
             'dist_T0': mean(np.abs(self.dist_T0)),
@@ -289,14 +251,9 @@ class MatchTrajectories:
             'recall': len(self.TP) / (len(self.TP) + len(self.FN)) if len(self.TP) + len(self.FN) > 0 else 0,
             'splitted_predicted_trajectories': self.splitted_predicted_trajectories,
             'splitted_annotated_trajectories': self.splitted_annotated_trajectories,
-            'ballistic_MAPE': mean(self.ballistic_MAPE),
-            'detections_MAPE': mean(self.detections_MAPE),
             'IoU': sum(self.intersection)/sum(self.union),
-            's_TP': self.s_TP,
-            's_FP': self.s_FP,
-            's_FN': self.s_FN,
-            's_precision': self.s_TP / (self.s_TP + self.s_FP) if self.s_TP + self.s_FP > 0 else 0,
-            's_recall': self.s_TP / (self.s_TP + self.s_FN) if self.s_TP + self.s_FN > 0 else 0,
+            'sample_precision': self.s_TP/(self.s_TP+self.s_FP) if self.s_TP+self.s_FP > 0 else 0,
+            'sample_recall': self.s_TP/(self.s_TP+self.s_FN) if self.s_TP+self.s_FN > 0 else 0,
         }
 
 
@@ -351,11 +308,11 @@ class InstantRenderer():
             pd = ProjectiveDrawer(calib, (0, 120, 255), segments=1)
 
             if ball := sample.ball:
-                for model in getattr(sample, "models", []):
+                for model in getattr(sample, 'models', []):
                     self.draw_model(pd, image, model, color=(255, 0, 20), label=model.message)
-                if model := getattr(ball, "model", None):
+                if model := getattr(sample, 'model', None):
                     self.draw_model(pd, image, model, color=(250, 195, 0), label="")
-                color = (150, 150, 150) if hasattr(ball, 'model') else ((255, 0, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255))
+                color = (150, 150, 150) if hasattr(sample, 'model') else ((225, 130, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255))
                 label = f"{ball.value:0.2f} - {str(ball.state)}" if ball.value else f"{str(ball.state)}"
                 self.draw_ball(pd, image, ball, color=color, label=label)
 
@@ -379,17 +336,5 @@ class TrajectoryRenderer(InstantRenderer):
             yield from super().__call__(instant, sample)
 
 
-# class SelectBall:
-#     def __init__(self, origin):
-#         self.origin = origin
-#     def __call__(self, key, item):
-#         try:
-#             item.ball = max([d for d in item.ball_detections if d.origin == self.origin], key=lambda d: d.value)
-#             item.timestamp = item.timestamps[item.ball.camera]
-#             item.calib = item.calibs[item.ball.camera]
-#         except ValueError:
-#             pass
-#         item.models = []
-#         return item
 
 

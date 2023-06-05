@@ -1,6 +1,8 @@
-from dataclasses import dataclass, field
+import copy
+from dataclasses import dataclass, field, make_dataclass
 from functools import cached_property
 import random
+import warnings
 
 from calib3d import Point3D, Point2D
 import numpy as np
@@ -12,10 +14,6 @@ from deepsport_utilities.ds.instants_dataset import BallState, Ball
 
 g = 9.81 * 100 /(1000*1000) # m/s² => cm/ms²
 
-def project_3D_to_2D(P, points3D):
-    points2D_H = np.einsum('bij,jb->ib', P, points3D.H)
-    return Point2D(points2D_H) * np.sign(points2D_H[2])
-
 def compute_length2D(K, RT, points3D, length, points2D=None):
     if points2D is None:
         points2D_H = np.einsum('bij,bjk,kb->ib', K, RT, points3D.H)
@@ -26,14 +24,27 @@ def compute_length2D(K, RT, points3D, length, points2D=None):
     answer = np.linalg.norm(points2D - Point2D(points2D_H) * np.sign(points2D_H[2]), axis=0)
     return answer
 
+def compute_position_error(window, model):
+    position_data = window.calib.project_3D_to_2D(window.points3D)
+    position_pred = window.calib.project_3D_to_2D(model(window.timestamps))
+    return np.linalg.norm(position_data - position_pred, axis=0)
+
+def fill(array):
+    """ Fill inplace boolean array with True between first and last True
+    """
+    where = np.where(array)[0]
+    if where.size:
+        array[where[0]:where[-1]+1]= True
+    return array
 
 class BallisticModel():
-    def __init__(self, initial_condition, T0):
+    def __init__(self, initial_condition, T0, window=None):
         self.initial_condition = x0, y0, z0, vx0, vy0, vz0 = initial_condition
         self.p0 = Point3D(x0, y0, z0)
         self.v0 = Point3D(vx0, vy0, vz0)
         self.a0 = Point3D(0, 0, g)
         self.T0 = T0
+        self.window = window
 
     def __call__(self, t):
         t = t - self.T0
@@ -44,45 +55,42 @@ class Window(tuple):
     def __new__(cls, args, popped):
         self = super().__new__(cls, tuple(args))
         self.popped = popped
+        self.mask = np.array([s.ball is not None for s in self])
         return self
-    @cached_property
-    def indices(self):
-        return [i for i, s in enumerate(self) if s.ball is not None]
-    @cached_property
-    def timestamps(self):
-        return np.array([self[i].timestamp for i in self.indices])
-    @cached_property
-    def points3D(self):
-        return Point3D([self[i].ball.center for i in self.indices])
-    @cached_property
-    def P(self):
-        try:
-            return np.stack([self[i].calib.P for i in self.indices])
-        except:
-            print(self.indices)
-            for i in self.indices:
-                print(self[i].calib)
-            raise
-    @cached_property
-    def RT(self):
-        return np.stack([np.hstack([self[i].calib.R, self[i].calib.T]) for i in self.indices])
-    @cached_property
-    def K(self):
-        return np.stack([self[i].calib.K for i in self.indices])
     @property
-    def duration(self):
-        return self.timestamps[-1] - self.timestamps[0]
+    def timestamps(self):
+        return np.array([s.timestamp for s in self], dtype=np.float64)
+    @property
+    def points3D(self):
+        return Point3D([s.ball.center if s.ball else Point3D(np.nan, np.nan, np.nan) for s in self])
+    @property
+    def calib(self):
+        _, indices, counts = np.unique([getattr(s.ball, 'camera', np.nan) for s in self], return_index=True, return_counts=True)
+        return self[indices[np.argmax(counts)]].calib
+    @property
+    def RT(self):
+        return np.stack([np.hstack([s.calib.R, s.calib.T]) if s.calib else np.ones((3,4))*np.nan for s in self])
+    @property
+    def K(self):
+        return np.stack([s.calib.K if s.calib else np.ones((3,3))*np.nan for s in self])
     #def __str__(self):
         #return " "*self.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
+    @property
+    def duration(self):
+        timestamps = self.timestamps[self.mask]
+        return timestamps[-1] - timestamps[0]
+    @property
+    def T0(self):
+        return self.timestamps[self.mask][0]
 
 
-# MSE solution of the 3D problem
-class Fitter3D:
+class Linear3DSolution:
     def __call__(self, window):
+        warnings.warn("Linear3DSolution is not able to produce a good initial condition with strong outliers")
         timestamps = window.timestamps
         if not timestamps.size:
             return None
-        T0 = window.timestamps[0]
+        T0 = window.T0
         timestamps = window.timestamps - T0
 
         A = np.hstack([np.tile(np.eye(3), (len(timestamps), 1)), np.vstack(np.eye(3)[np.newaxis]*timestamps[...,np.newaxis, np.newaxis])])
@@ -91,97 +99,106 @@ class Fitter3D:
             initial_guess = (np.linalg.inv(A.T@A)@A.T@b).flatten()
         except np.linalg.LinAlgError:
             return None
-
-        model = BallisticModel(initial_guess, T0)
-        model.window = Window([window[i] for i in window.indices], popped=window.popped + window.indices[0])
-        return model
+        return BallisticModel(initial_guess, T0, window)
 
 @dataclass
-class RanSaC(Fitter3D):
-    n_ini: int = 3
-    n_models: int = 200
-    inlier_threshold: float = 31 # cm between model and detection to be considered inlier
-    min_inliers: int = 4
-    distance_threshold: float = 100 # minimum ms betwen two initial random samples
-    alpha: int = 2 # denominator exponent in mean square error computation
-    #tau_cost_ransac: float = 0.5 # TODO
-    display: bool = False
+class FirstPositionNullSpeedSolution:
     def __call__(self, window):
-        best_model_error = np.inf
-        model = None
+        T0 = window.T0
+        initial_condition = *Point3D(window.points3D[:,0]).to_int_tuple(), 0, 0, 0
+        return BallisticModel(initial_condition, T0)
 
-        indices = np.array(window.indices)
+class BoundedFitter:
+    max_speed: int = 13 # m/s
+    max_margin: int = 200 # cm
+    max_height: int = 600 # cm
+    @cached_property
+    def bounds(self):
+        max_speed = self.max_speed*100/1000 # cm/ms
+        return (
+            (   0-self.max_margin,    0-self.max_margin, -self.max_height, -max_speed, -max_speed, -max_speed),
+            (2800+self.max_margin, 1500+self.max_margin, -BALL_DIAMETER/2,  max_speed,  max_speed,  max_speed)
+        )
+
+@dataclass
+class PositionFitter2D(BoundedFitter):
+    display: bool = False
+    gtol: float = 10
+    ftol: float = 10
+    xtol: float = 10
+    def __call__(self, window):
+        # initial guess
+        if (model := super().__call__(window)) is None:
+            return None
+
+        T0 = window.T0
         timestamps = window.timestamps
-        eye = np.eye(len(timestamps), dtype=np.bool)
-        for _ in range(self.n_models):
-            # initial samples: 3 detections separated by at least 100ms
-            samples_mask = np.array(eye[np.random.randint(len(timestamps))])
-            while samples_mask.sum() < self.n_ini:
-                mask = np.all(np.abs(timestamps - timestamps[samples_mask, None]) >= self.distance_threshold, axis=0)
-                samples_mask += random.choice(eye[mask])
+        position_data = window.calib.project_3D_to_2D(window.points3D)
 
-            # fit a model to the sample
-            sample_model = super().__call__(Window([window[i] for i in indices[samples_mask]], window.popped + np.where(samples_mask)[0][0]))
-            inliers_mask = np.linalg.norm(sample_model(timestamps) - window.points3D, axis=0) < self.inlier_threshold
-            if inliers_mask.sum() < self.min_inliers or inliers_mask.sum() < (model_length := np.where(inliers_mask)[0].ptp()) /2:
-                continue
+        def error(initial_condition):
+            model = BallisticModel(initial_condition, T0)
+            position_pred = window.calib.project_3D_to_2D(model(timestamps))
+            return np.linalg.norm(position_data - position_pred, axis=0)
 
-            # refine the model on initial inliers
-            sample_model = super().__call__(Window([window[i] for i in indices[inliers_mask]], window.popped + np.where(inliers_mask)[0][0]))
-            model_error = np.linalg.norm(sample_model(timestamps[inliers_mask]) - window.points3D[:, inliers_mask], axis=0)
-            model_error = np.sum(model_error)/len(model_error)**self.alpha
+        try:
+            result = scipy.optimize.least_squares(error, model.initial_condition, loss='cauchy',
+                bounds=self.bounds, method='dogbox', gtol=self.gtol, xtol=self.xtol, ftol=self.ftol)
+            if not result.success:
+                raise ValueError(result.message)
+        except ValueError:
+            self.display and print("  "*window.popped, self.__class__.__name__, "found no model")
+            return None
 
-            # update best model
-            if model_error < best_model_error:
-                model = sample_model
-                model_indices = np.arange(np.min(np.where(inliers_mask)), np.max(np.where(inliers_mask))+1)
-                model.window = Window([window[i] for i in model_indices], window.popped + model_indices[0])
-                best_model_error = model_error
+        return BallisticModel(result.x, T0, window=window)
 
-        # TODO:
-        # - remove models whose vertical amplitude is flat (assessed based on appropriate threshold)
-        # or because their ocupancy rate is lower than 50% (defined by the ratio between the number of 3D candidates
-        #                                   close to the detected ballistic trajectory and its duration in timestamps.)
-        # zhigh = 350;
-        # zlow = 120;
-        # thres_deltazhigh = 40;      % minimum difference between the highest
-        #                             % and lowest ball candidates on a
-        #                             % ballistic trajectory if all the candidates
-        #                             % are above zhigh
-        # thres_deltazlow = 30;       % minimum difference between the highest
-        #                             % and lowest ball candidates on a
-        #                             % ballistic trajectory if all the candidates
-        #                             % are bellow zlow
-        # thres_deltaz = 10;          % minimum difference between the highest
-        #                             % and lowest ball candidates on a
-        #                             % ballistic trajectory
+@dataclass
+class FilterInliers:
+    distance_threshold: float = 20
+    display: bool = False
+
+    def __call__(self, window):
+        if (model := super().__call__(window)) is None:
+            return None
+
+        position_error = compute_position_error(window, model)
+        inliers_mask = position_error < self.distance_threshold
+        self.display and print("  "*window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
+        with np.printoptions(precision=0, suppress=True, nanstr='-'):
+            message = "Too many, returning No model." if np.sum(inliers_mask) < 3 else ""
+            self.display and print(f"initial 2D inliers (POSITION-ONLY model fitting error: {position_error}). {message}", flush=True)
+
+        if np.sum(inliers_mask) < 3:
+            return None
+
+        window.mask = inliers_mask
         return model
 
 @dataclass
-class Fitter2D(Fitter3D):
+class PositionAndDiameterFitter2D(BoundedFitter):
     d_error_weight: float = 1
     underground_penalty_factor: float = 100
     optimizer_kwargs: dict = field(default_factory=dict)
+    tol: float = 1
 
     @cached_property
     def error_fct(self):
         return lambda p_error, d_error: np.linalg.norm(p_error) + self.d_error_weight*np.linalg.norm(d_error)
 
     def __call__(self, window):
-        # initial guess computed from MSE solution of the 3D problem
         if (initial_guess := super().__call__(window)) is None:
             return None
 
         timestamps = window.timestamps
-        T0 = timestamps[0]
-        position_data = project_3D_to_2D(window.P, window.points3D)
+        T0 = window.T0
+        initial_guess = BallisticModel(np.array([*Point3D(window.points3D[:,0]).to_int_tuple(), 0, 0, 0]), T0)
+        position_data = window.calib.project_3D_to_2D(window.points3D)
         diameter_data = compute_length2D(window.K, window.RT, window.points3D, BALL_DIAMETER, points2D=position_data)
 
         def error(initial_condition):
             model = BallisticModel(initial_condition, T0)
             points3D = model(timestamps)
 
-            position_pred = project_3D_to_2D(window.P, points3D)
+            position_pred = window.calib.project_3D_to_2D(points3D)
             position_error = np.linalg.norm(position_data - position_pred, axis=0)
 
             diameter_pred = compute_length2D(window.K, window.RT, points3D, BALL_DIAMETER, points2D=position_pred)
@@ -189,15 +206,19 @@ class Fitter2D(Fitter3D):
 
             underground_balls = points3D.z > BALL_DIAMETER/2  # z points downward
             underground_penalty = self.underground_penalty_factor * np.sum(points3D.z[underground_balls])
+
+            position_error = position_error[~np.isnan(position_error)]
+            diameter_error = diameter_error[~np.isnan(diameter_error)]
+
             return self.error_fct(position_error, diameter_error) + underground_penalty
 
-        result = scipy.optimize.minimize(error, initial_guess.initial_condition, **{**{'tol': 1}, **self.optimizer_kwargs})
+        bounds = list(zip(*self.bounds))
+        result = scipy.optimize.minimize(error, initial_guess.initial_condition, bounds=bounds, **{**{'tol': self.tol}, **self.optimizer_kwargs})
         if not result.success:
+            self.display and print("  "*window.popped, self.__class__.__name__, "found no model", result.message, result.x)
             return None
 
-        model = BallisticModel(result['x'], T0)
-        model.window = Window([window[i] for i in window.indices], popped=window.popped + window.indices[0])
-        return model
+        return BallisticModel(result.x, T0, window=window)
 
 
 
@@ -209,60 +230,53 @@ repr_dict = {
 }
 
 
+
 @dataclass
-class FilteredFitter2D(Fitter2D):
+class InliersFiltersSolution:
     max_outliers_ratio: float = 0.4
     min_inliers: int = 2
-    first_inlier: int = 2
+    first_inlier: int = 1
     position_error_threshold: float = 2
-    scale: float = 0.1
     display: bool = False
-
-    def compute_inliers(self, window, model):
-        inliers_condition = lambda position_error: position_error < self.position_error_threshold * (1 + self.scale*np.sin(np.linspace(0, np.pi, len(position_error))))
-        position_pred = project_3D_to_2D(window.P, model(window.timestamps))
-        position_data = project_3D_to_2D(window.P, window.points3D)
-        position_error = np.linalg.norm(position_data - position_pred, axis=0)
-
-        inliers = np.array([False]*len(window))
-        inliers[window.indices] = inliers_condition(position_error)
-        return inliers
 
     def __call__(self, window):
         if (model := super().__call__(window)) is None:
             return None
 
-        inliers_mask = self.compute_inliers(window, model)
+        position_error = compute_position_error(window, model)
+        inliers_mask = position_error < self.position_error_threshold
+        model.window.mask = fill(np.array(inliers_mask))
         self.display and print("  "*window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
 
         if sum(inliers_mask) < self.min_inliers:
-            model.message = "too few inliers"
+            with np.printoptions(precision=0, suppress=True, nanstr='-'):
+                model.message = f"too few inliers (POSITION+DIAMETER model fitting error: {position_error})"
             self.display and print(model.message, flush=True)
             model.window[0].models.append(model)
             return None
 
-        if sum(inliers_mask[0:self.first_inlier]) == 0:
-            model.message = f"{self.first_inlier} first samples are not inliers"
+        if sum(inliers_mask[0:self.first_inlier]) != self.first_inlier:
+            with np.printoptions(precision=0, suppress=True, nanstr='-'):
+                model.message = f"first {self.first_inlier} samples are not inliers (POSITION+DIAMETER model fitting error: {position_error})"
             self.display and print(model.message, flush=True)
             model.window[0].models.append(model)
             return None
 
-        model_indices = np.arange(np.min(np.where(inliers_mask)), np.max(np.where(inliers_mask))+1)
-        model.window = Window([window[i] for i in model_indices], popped=window.popped + model_indices[0])
-
-        outliers_ratio = 1 - sum(inliers_mask)/len(model_indices)
+        outliers_ratio = 1 - sum(inliers_mask)/sum(model.window.mask)
         if outliers_ratio > self.max_outliers_ratio:
             model.message = "too many outliers"
             self.display and print(model.message, flush=True)
             model.window[0].models.append(model)
             return None
 
-        model.message = "proposed"
+        with np.printoptions(precision=0, suppress=True, nanstr='-'):
+            model.message = f"proposed (POSITION+DIAMETER model fitting error: {position_error})"
+
         self.display and print(model.message, flush=True)
         return model
 
 @dataclass
-class UseStateFilteredFitter2D(FilteredFitter2D):
+class FilterBallStateSolution:
     min_flyings: int = 1
     max_nonflyings_ratio: float = 0.8
     display: bool = False
@@ -287,6 +301,7 @@ class UseStateFilteredFitter2D(FilteredFitter2D):
         return super().__call__(window)
 
 
+
 class SlidingWindow(list):
     def __init__(self, gen, min_duration):
         self.gen = gen
@@ -305,16 +320,16 @@ class SlidingWindow(list):
             yield self.pop()
         while self.duration > self.min_duration:
             yield self.pop()
+        while len(self) and self[0].ball is None:
+            yield self.pop()
+            if len(self) == 0:
+                self.enqueue()
     @property
     def duration(self):
         detection_timestamps = [item.timestamp for item in self if item.ball is not None]
         if len(detection_timestamps) < 2:
             return 0
         return detection_timestamps[-1] - detection_timestamps[0]
-
-
-
-FITTED_BALL_ORIGIN = 'fitting'
 
 
 class TrajectoryDetector:
@@ -325,11 +340,13 @@ class TrajectoryDetector:
             min_window_length (int): minimum window length (in miliseconds).
     """
     def __init__(self, fitter_types, min_window_length, min_distance_px, min_distance_cm,
-                 **fitter_kwargs):
+                 retries, **fitter_kwargs):
         self.min_window_length = min_window_length
         self.min_distance_px = min_distance_px
         self.min_distance_cm = min_distance_cm
-        self.fitter = type("Fitter", fitter_types, {})(**fitter_kwargs)
+        self.retries = retries
+        Fitter = make_dataclass("Fitter", [], bases=fitter_types)
+        self.fitter = Fitter(**fitter_kwargs)
         self.display = fitter_kwargs.get('display', False)
     """
         Inputs: generator of `Sample`s (containing ball detections or not)
@@ -348,37 +365,34 @@ class TrajectoryDetector:
                     sliding_window.enqueue()
 
                 # Grow sliding_window while model fits data
+                retries = self.retries
                 while True:
                     sliding_window.enqueue()
                     if not (new_model := self.fitter(Window(sliding_window, popped=sliding_window.popped))):
-                        break
-                    if len(new_model.window) >= len(model.window):
+                        if retries == 0:
+                            break
+                        retries = retries - 1
+                        self.display and print("  "*sliding_window.popped, "retries:", retries)
+                        continue
+                    if len(new_model.window) > len(model.window):
                         model = new_model
+                        retries = self.retries
 
                 self.display and print("  "*model.window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, True] for i, s in enumerate(model.window)]), end="|\t")
+
+                model.window = Window([sample for sample, mask in zip(model.window, model.window.mask) if mask], popped=model.window.popped + np.where(model.window.mask)[0][0])
 
                 # discard model if it is too short
                 curve = model(model.window.timestamps)
                 distances_cm = np.linalg.norm(curve[:, 1:] - curve[:, :-1], axis=0)
 
-                dist = lambda calib, i: np.linalg.norm(calib.project_3D_to_2D(curve[:, i:i+1]) - calib.project_3D_to_2D(curve[:, i-1:i]))
-                distances_px = [dist(model.window[i].calib, i) for i in model.window.indices]
+                curve = model.window.calib.project_3D_to_2D(curve)
+                distances_px = np.linalg.norm(curve[:, 1:] - curve[:, :-1], axis=0)
 
                 if sum(distances_cm) >= self.min_distance_cm and sum(distances_px) >= self.min_distance_px:
                     self.display and print("validated")
-                    # Set model
                     for sample in model.window:
-                        if sample.ball is not None:
-                            camera_idx = [s.ball.camera for s in model.window if s.ball is not None][0]
-                        else:
-                            sample.timestamp = sample.timestamps[camera_idx]
-                            sample.ball = Ball({
-                                'origin': FITTED_BALL_ORIGIN,
-                                'center': model(sample.timestamp).tolist(),
-                                'image': camera_idx,
-                                'state': BallState.FLYING,
-                            })
-                        sample.ball.model = model
+                        sample.model = model
                 else:
                     self.display and print("skipped because of distance:", sum(distances_cm), sum(distances_px))
 

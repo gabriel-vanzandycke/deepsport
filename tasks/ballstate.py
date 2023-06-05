@@ -101,7 +101,6 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
     @cached_property
     def chunk(self):
         chunk = super().chunk
-
         if experiment_id := self.cfg.get("ballsize_weights"):
             folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
             exp = None
@@ -144,6 +143,8 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
     def load_weights(self, *args, **kwargs):
         experiment_id = self.cfg.get('experiment_id', os.path.basename(os.path.dirname(self.cfg["filename"])))
         folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
+        print(self.cfg['nstates'])
+        #super().load_weights(*args, **kwargs)
         if self.cfg['nstates']:
             for cp in self.chunk_processors:
                 if hasattr(cp, "model") and cp.model.name == 'classification_head':
@@ -222,12 +223,15 @@ class BallViewRandomCropperTransformCompat():
             *args, scale_min=scale_min, scale_max=scale_max, **kwargs)
     def __call__(self, view_key, view):
         trusted_origins = ['annotation', 'interpolation']
-        if isinstance(view_key[0], SequenceInstantKey) or view.ball.origin not in trusted_origins:
+        if view.ball.origin not in trusted_origins:
             return self.scale_cropper_transform(view_key, view)
         else:
             return self.size_cropper_transform(view_key, view)
 
 
+class TwoTasksBalancer:
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError("retro-compatibility")
 
 class ComputeClassifactionMetrics(_ComputeClassifactionMetrics):
     def on_batch_end(self, predicted_state, batch_ball_state, **_):
