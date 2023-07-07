@@ -12,28 +12,26 @@ from experimentator import find
 from mlworkflow import PickledDataset, TransformedDataset
 
 from tasks.ballistic import TrajectoryBasedEvaluation, SampleBasedEvaluation#, PickDetection#SelectBall,
-from models.ballistic import TrajectoryDetector, FilterBallStateSolution, InliersFiltersSolution, PositionAndDiameterFitter2D, FilterInliers, PositionFitter2D, FirstPositionNullSpeedSolution
+from models.ballistic import TrajectoryDetector, AnnotatedTrajectoryJumper, FilterBallStateSolution, InliersFiltersSolution, PositionAndDiameterFitter2D, FilterInliers, PositionFitter2D, FirstPositionNullSpeedSolution
 
 dotenv.load_dotenv()
 
 parameters = {
-    "min_inliers":             ("suggest_int",   {'low':  2, 'high':   8, 'step':  1}),
-    "max_outliers_ratio":      ("suggest_float", {'low': .0, 'high':  .9, 'step': .1}),
-    "min_flyings":             ('fixed', 1),#("suggest_int",   {'low':  0, 'high':   5, 'step':  1}),
-    "max_nonflyings_ratio":    ("suggest_float", {'low':  0, 'high':   1, 'step': .1}),
-    #"max_inliers_decrease": ('fixed', .1),#("suggest_float", {'low':  0, 'high':  .2, 'step':.05}),
-    "position_error_threshold":("suggest_int",   {'low':  1, 'high':  10, 'step':  1}),
-    "d_error_weight":          ("suggest_int",   {'low':  0, 'high': 100, 'step': 10}),
-    "min_distance_cm":         ("fixed", 100),#  {'low': 50, 'high': 200, 'step': 50}),
-    "min_distance_px":         ("fixed", 100),#  {'low': 50, 'high': 200, 'step': 50}),
-    "min_window_length":       ("suggest_int",   {'low':160, 'high': 450, 'step': 10}),
-    "first_inlier":            ('fixed', 1),#("suggest_int",   {'low':  1, 'high':   4, 'step':  1}),
-    "retries":                 ("suggest_int",   {'low':  0, 'high':   4, 'step':  1}),
-    "ftol":                    ("suggest_float", {'low':  1e-6, 'high':  100, 'log': True}),
-    "xtol":                    ("suggest_float", {'low':  1e-6, 'high':  100, 'log': True}),
-    "gtol":                    ("suggest_float", {'low':  1e-6, 'high':  100, 'log': True}),
-    "tol":                     ("suggest_float", {'low':  1e-6, 'high':  100, 'log': True}),
-    "distance_threshold":      ("suggest_float", {'low':  1, 'high':  20, 'step':  1}),
+    "min_inliers":             ("suggest_int",   {'low':   4, 'high':   8, 'step':  1}),
+    "max_outliers_ratio":      ("suggest_float", {'low':  .5, 'high':  .9, 'step': .1}),
+    "min_flyings":             ("suggest_int",   {'low':   1, 'high':   5, 'step':  1}),
+    "position_error_threshold":("suggest_float", {'low':   1, 'high':   3, 'step': .1}),
+    "d_error_weight":          ("suggest_int",   {'low':   0, 'high': 200, 'step': 20}),
+    "min_distance_cm":         ("fixed", 100),#  {'low':  50, 'high': 200, 'step': 50}),
+    "min_distance_px":         ("fixed", 100),#  {'low':  50, 'high': 200, 'step': 50}),
+    "min_window_length":       ("suggest_int",   {'low': 100, 'high': 400, 'step': 25}),
+    "first_inlier":            ("fixed", 0),#("suggest_int",   {'low':   0, 'high':   1, 'step':  1}),
+    "retries":                 ("fixed", 2),#("suggest_int",   {'low':   0, 'high':   4, 'step':  1}),
+    "ftol":                    ("suggest_float", {'low':1e-5, 'high':1e-3, 'log': True}),
+    "xtol":                    ("suggest_float", {'low':1e-8, 'high':1e-5, 'log': True}),
+    "gtol":                    ("suggest_float", {'low':1e-7, 'high':1e-2, 'log': True}),
+    "tol":                     ("suggest_float", {'low':1e-8, 'high':1e-5, 'log': True}),
+    "distance_threshold":      ("suggest_int",   {'low':  10, 'high': 100, 'step': 10}),
 }
 
 if __name__ == '__main__':
@@ -47,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument("--kwargs", nargs='*', default=[])
     parser.add_argument("--skip-wandb", action='store_true', default=False)
     parser.add_argument("--start", type=int, default=0)
+    parser.add_argument("--oracle-trajectories", action='store_true', default=False)
     args = parser.parse_args()
 
     cast = lambda k, v: (k, eval(v))
@@ -102,7 +101,9 @@ if __name__ == '__main__':
         dds = PickledDataset(find(args.positions_dataset))
         agen = (dds.query_item(k) for i, k in enumerate(sorted(dds.keys)) if i >= args.start)
         pgen = (dds.query_item(k) for i, k in enumerate(sorted(dds.keys)) if i >= args.start)
-        sw = TrajectoryDetector(fitter_types, **kwargs)
+
+        TD = AnnotatedTrajectoryJumper if args.oracle_trajectories else TrajectoryDetector
+        sw = TD(fitter_types, **kwargs)
         compare = SampleBasedEvaluation(min_duration=args.min_duration)
         mt = TrajectoryBasedEvaluation(args.min_duration, None)
         mt(agen, compare(sw(pgen)))
@@ -120,7 +121,8 @@ if __name__ == '__main__':
 
 
     # Using 'JournalStorage' because 'RDBStorage' with sqlite doesn't handle concurrency on NFS storage
-    filename = f"ballistic_{args.name}_{args.method}.db"
+    suffix = "_oracle_trajectories" if args.oracle_trajectories else ""
+    filename = f"ballistic_{args.name}_{args.method}{suffix}.db"
     storage = optuna.storages.JournalStorage(
         optuna.storages.JournalFileStorage(filename,
             optuna.storages.JournalFileOpenLock(filename)
