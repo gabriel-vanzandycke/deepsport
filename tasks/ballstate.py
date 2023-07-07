@@ -6,7 +6,7 @@ from typing import NamedTuple
 import typing
 
 import numpy as np
-from calib3d import Point2D
+from calib3d import Point2D, Point3D
 import pandas
 import sklearn.metrics
 import tensorflow as tf
@@ -75,11 +75,11 @@ class BallStateClassification(TensorflowExperiment):
 
 
 class BallStateAndBallSizeExperiment(TensorflowExperiment):
-    batch_inputs_names = ["batch_input_image", "batch_input_image2",
+    batch_inputs_names = ["batch_input_image", "batch_input_image2", "batch_ball_height",
                           "batch_is_ball", "batch_ball_size", "batch_ball_state"]
-    batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "predicted_state",
+    batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "predicted_state", "predicted_height"
                            "regression_loss", "classification_loss", "state_loss"]
-    batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state"]
+    batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state", "predicted_height"]
 
     @cached_property
     def balancer(self):
@@ -180,12 +180,19 @@ class AddSingleBallStateFactory(Transform):
 
 
 class AddBallSizeFactory(Transform):
+    def __init__(self, predict_height=False):
+        self.predict_height = predict_height
     def __call__(self, view_key, view):
         ball = view.ball
         #                        (          either ball is an annotation           or             true ball annotation transferred to detection         )
         predicate = lambda ball: ( ball.origin in ['annotation', 'interpolation']  or  (ball.origin in ['pifball', 'ballseg'] and ball.center.z < -10)  ) \
             and ball.visible is not False and view.calib.projects_in(ball.center)
-        return {"ball_size": view.calib.compute_length2D(ball.center, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
+        data = {"ball_size": view.calib.compute_length2D(ball.center, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
+        if self.predict_height:
+            center2D = view.calib.project_3D_to_2D(ball.center)
+            ground2D = view.calib.project_3D_to_2D(Point3D(ball.center.x, ball.center.y, 0))
+            data["ball_height"] = np.linalg.norm(center2D - ground2D) if predicate(ball) else np.nan
+        return data
 
 class AddIsBallTargetFactory(Transform):
     def __init__(self, unconfident_margin=.1, proximity_threshold=10):
@@ -341,7 +348,7 @@ class CombineLosses(ChunkProcessor):
         self.weights = weights
         self.names = names
     def __call__(self, chunk):
-        chunk["loss"] = tf.reduce_sum([chunk[name]*w for name, w in zip(self.names, self.weights)])
+        chunk["loss"] = tf.reduce_sum([chunk[name]*w for name, w in zip(self.names, self.weights) if name in chunk])
 
 
 class BallDetection(NamedTuple): # for retro-compatibility

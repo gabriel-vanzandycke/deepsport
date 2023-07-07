@@ -178,6 +178,7 @@ class ComputeKeypointsDetectionHitmap(ChunkProcessor):
         # Saved here for 'config' property
         self.non_max_suppression_pool_size = non_max_suppression_pool_size
         self.threshold = threshold
+        self.fast = fast
 
         self.avoid_local_eq = AvoidLocalEqualities() if fast else GaussianBlur(30, 7)
         self.peak_local_max = PeakLocalMax(min_distance=non_max_suppression_pool_size//2, thresholds=thresholds)
@@ -473,7 +474,7 @@ class ImportDetectionsTransform(Transform):
 
         # Remove true positives
         if self.remove_true_positives and instant.ball:
-            cond = lambda detection: np.linalg.norm(detection.point - instant.calibs[detection.camera].project_3D_to_2D(instant.ball)) > self.proximity_threshold
+            cond = lambda detection: np.linalg.norm(detection.point - instant.calibs[detection.camera].project_3D_to_2D(instant.ball.center)) > self.proximity_threshold
             detections = filter(cond, detections)
 
         # Remove duplicates

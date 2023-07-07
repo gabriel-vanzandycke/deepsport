@@ -7,15 +7,10 @@ import numpy as np
 
 from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState
-
+from tasks.ballsize import compute_projection_error
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
 
-
-def compute_projection_error(true_center: Point3D, pred_center: Point3D):
-    difference = true_center - pred_center
-    difference.z = 0 # set z coordinate to 0 to compute projection error on the ground
-    return np.linalg.norm(difference, axis=0)
 
 @dataclass
 class SampleBasedEvaluation:
@@ -43,9 +38,9 @@ class SampleBasedEvaluation:
                 true_balls = [a for a in sample.ball_annotations if a.origin in ['interpolation', 'annotation']]
                 if true_balls:
                     true_center = true_balls[0].center
-                    detection_error = compute_projection_error(true_center, sample.ball.center)
+                    detection_error = compute_projection_error(true_center, sample.ball.center)[0]
                     if hasattr(sample, 'model'):
-                        error = compute_projection_error(true_center, sample.model(sample.timestamp))
+                        error = compute_projection_error(true_center, sample.model(sample.timestamp))[0]
                     else:
                         error = detection_error
                     if sample.ball_state == BallState.FLYING:
@@ -251,7 +246,7 @@ class TrajectoryBasedEvaluation:
             'recall': len(self.TP) / (len(self.TP) + len(self.FN)) if len(self.TP) + len(self.FN) > 0 else 0,
             'splitted_predicted_trajectories': self.splitted_predicted_trajectories,
             'splitted_annotated_trajectories': self.splitted_annotated_trajectories,
-            'IoU': sum(self.intersection)/sum(self.union),
+            #'IoU': sum(self.intersection)/sum(self.union),
             'sample_precision': self.s_TP/(self.s_TP+self.s_FP) if self.s_TP+self.s_FP > 0 else 0,
             'sample_recall': self.s_TP/(self.s_TP+self.s_FN) if self.s_TP+self.s_FN > 0 else 0,
         }
@@ -262,12 +257,13 @@ class InstantRenderer():
         self.ids = ids
         self.font_size = .8
 
-    def draw_ball(self, pd, image, ball, color=None, label=None):
+    def draw_ball(self, pd, image, ball, color=None, label=None, cross=True):
         color = color or pd.color
         ground3D = Point3D(ball.center.x, ball.center.y, 0)
         pd.draw_line(image, ball.center,               ground3D,                  lineType=cv2.LINE_AA, color=color)
-        pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), lineType=cv2.LINE_AA, thickness=1, color=color)
-        pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), lineType=cv2.LINE_AA, thickness=1, color=color)
+        if cross:
+            pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), lineType=cv2.LINE_AA, thickness=1, color=color)
+            pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), lineType=cv2.LINE_AA, thickness=1, color=color)
         radius = pd.calib.compute_length2D(ball.center, BALL_DIAMETER/2)
         x, y = pd.calib.project_3D_to_2D(ball.center).to_int_tuple()
 
@@ -275,7 +271,7 @@ class InstantRenderer():
         if label is not None:
             cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, color, 2, lineType=cv2.LINE_AA)
 
-    def draw_model(self, pd, image, model, color, label):
+    def draw_model(self, pd, image, model, color, label, offset=0):
         start_timestamp = model.window[0].timestamp
         end_timestamp = model.window[-1].timestamp
         duration = end_timestamp - start_timestamp
@@ -291,15 +287,17 @@ class InstantRenderer():
         points2D = pd.calib.project_3D_to_2D(points3D)
         radii = pd.calib.compute_length2D(points3D, BALL_DIAMETER/2)
         for i, (point3D, point2D, radius) in enumerate(zip(points3D, points2D, radii)):
-            pd.draw_line(image, point3D, model.window[i].ball.center, (200, 200, 200), 1)
+            pd.draw_line(image, point3D, model.window[i].ball.center, (255, 255, 255), 1)
+            self.draw_ball(pd, image, model.window[i].ball, (255,255,255), cross=False)
             radius = 2
+            cv2.circle(image, pd.calib.project_3D_to_2D(model.window[i].ball.center).to_int_tuple(), int(radius), (200, 200, 200), -1)
             cv2.circle(image, point2D.to_int_tuple(), int(radius), color, -1)
 
         # Write model mark
         point3D = Point3D(points3D[:, 0])
         point3D.z = 0
         x, y = pd.calib.project_3D_to_2D(point3D).to_int_tuple()
-        cv2.putText(image, label, (x, y+20), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, (250, 20, 30), 2, lineType=cv2.LINE_AA)
+        cv2.putText(image, label, (x, y+20+offset), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, (250, 20, 30), 2, lineType=cv2.LINE_AA)
 
 
     def __call__(self, sample):
@@ -308,9 +306,19 @@ class InstantRenderer():
             pd = ProjectiveDrawer(calib, (0, 120, 255), segments=1)
 
             if ball := sample.ball:
-                for model in getattr(sample, 'models', []):
-                    self.draw_model(pd, image, model, color=(255, 0, 20), label=model.message)
-                if model := getattr(sample, 'model', None):
+                models = getattr(sample, 'models', [])
+                model = getattr(sample, 'model', None)
+                if models:
+                    if model:
+                        length = len(model.window)
+                    else:
+                        length = len(max(models, key=lambda m: len(m.window)).window)
+                    models = [m for m in models if len(m.window) >= length]
+                    for i, m in enumerate(models):
+                        color = [(255, 0, 20), (120, 0, 255), (20, 0, 255), (255, 0, 255), (255, 0, 80)][i%5]
+                        self.draw_model(pd, image, m, color=color, label=m.message, offset=i*10)
+
+                if model:
                     self.draw_model(pd, image, model, color=(250, 195, 0), label="")
                 color = (150, 150, 150) if hasattr(sample, 'model') else ((225, 130, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255))
                 label = f"{ball.value:0.2f} - {str(ball.state)}" if ball.value else f"{str(ball.state)}"
