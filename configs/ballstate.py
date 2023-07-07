@@ -27,6 +27,7 @@ globals().update(locals()) # required to use 'BallState' in list comprehention
 batch_size = 16
 
 with_diff = True
+predict_height = False
 
 # Dataset parameters
 side_length = 224
@@ -85,8 +86,8 @@ transforms = [
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(state_mapping),
-        tasks.ballstate.AddBallSizeFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(state_mapping) if nstates else None,
+        tasks.ballstate.AddBallSizeFactory(predict_height=predict_height),
         tasks.ballstate.AddIsBallTargetFactory(),
     )
 ]
@@ -95,16 +96,17 @@ globals().update(locals()) # required for using locals in lambda
 #dataset = mlwf.FilteredDataset(dataset, lambda k,v: v['ball_state'] in list(state_mapping.keys()), cache=True)
 
 testing_arena_labels = ('KS-FR-STRASBOURG', 'KS-FR-GRAVELINES', 'KS-FR-BOURGEB', 'KS-FR-EVREUX')
-dataset_splitter_str = 'arenas_specific'
-validation_pc = 0 if nstates == 0 else 10
+validation_arena_labels = ('KS-UK-NEWCASTLE', 'KS-US-IPSWICH', 'KS-FI-KAUHAJOKI', 'KS-FR-LEMANS', 'KS-FR-ESBVA', 'KS-FR-NANTES')
+
+dataset_splitter_str = 'arenas_specific_val'
+validation_pc = 10
 fold = 0
 dataset_splitter = {
     "deepsport": deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage='testing2', validation_pc=validation_pc),
     "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(testing_arena_labels, validation_pc=validation_pc),
+    "arenas_specific_val": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingValidationArenaLabelsDatasetSplitter(testing_arena_labels, validation_arena_labels),
 }[dataset_splitter_str]
 subsets = dataset_splitter(dataset, fold)
-if nstates == 0:
-    subsets.append(Subset("testing2", SubsetType.EVAL, mlwf.TransformedDataset(experimentator.CachedPickledDataset(find("ids-private_balls_dataset.pickle")), transforms)))
 
 ## add ballistic dataset
 #dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
@@ -122,12 +124,12 @@ callbacks = [
     experimentator.GatherCycleMetrics(),
     experimentator.LogStateDataCollector(),
     experimentator.LearningRateDecay(start=range(decay_start,101,decay_step), duration=2, factor=.5) if not warmup else None,
-    tasks.ballsize.ComputeDiameterError(),
+    tasks.ballsize.ComputeDiameterError() if not predict_height else tasks.ballsize.ComputeJointError(),
     experimentator.wandb_experiment.LogStateWandB(),
     experimentator.LearningRateWarmUp() if warmup else None,
     tasks.classification.ComputeClassifactionMetrics(logits_key="predicted_state", target_key="batch_ball_state", name="state_classification") if nstates else None,
     tasks.classification.ExtractClassificationMetrics(class_name="BallState.FLYING", class_index=FLYING_index, name="state_classification") if nstates else None,
-    tasks.ballstate.StateFLYINGMetrics(),
+    tasks.ballstate.StateFLYINGMetrics() if nstates else None,
     tasks.ballstate.ComputeDetectionMetrics(origin='ballseg') if dataset_name != "sds_balls_dataset.pickle" else None,
     tasks.detection.AuC("top1-AuC", "top1_metrics"),
     tasks.detection.AuC("top2-AuC", "top2_metrics"),
@@ -151,14 +153,14 @@ chunk_processors = [
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
     models.tensorflow.SixChannelsTensorflowBackbone("vgg16.VGG16", include_top=False),
-    models.other.LeNetHead(name="regression", output_features=2),
+    models.other.LeNetHead(name="regression", output_features=3 if predict_height else 2),
     models.other.LeNetHead(name="classification", output_features=len(state_mapping[1])) if nstates else None,
     tasks.ballsize.NamedOutputs("regression_logits"),
     tasks.ballsize.IsBallClassificationLoss(),
     tasks.ballsize.RegressionLoss(),
     lambda chunk: chunk.update({"predicted_state": chunk["classification_logits"]}) if nstates else None,
     tasks.ballstate.StateClassificationLoss() if nstates else \
-        tasks.ballstate.CombineLosses(["classification_loss", "regression_loss"], weights=[alpha, 1-alpha]),
+        tasks.ballstate.CombineLosses(["classification_loss", "regression_loss", "height_regression_loss"], weights=[alpha, 1-alpha, 1-alpha]),
     lambda chunk: chunk.update({"predicted_is_ball": tf.nn.sigmoid(chunk["predicted_is_ball"])}),
     lambda chunk: chunk.update({"predicted_state": tf.nn.sigmoid(chunk["predicted_state"])}) if nstates else None,
 ]
