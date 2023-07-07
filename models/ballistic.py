@@ -30,8 +30,9 @@ def compute_position_error(window, model):
     return np.linalg.norm(position_data - position_pred, axis=0)
 
 def fill(array):
-    """ Fill inplace boolean array with True between first and last True
+    """ Fill boolean array with True between first and last True
     """
+    array = np.array(array)
     where = np.where(array)[0]
     if where.size:
         array[where[0]:where[-1]+1]= True
@@ -124,11 +125,11 @@ class BoundedFitter:
 class PositionFitter2D(BoundedFitter):
     display: bool = False
     gtol: float = 10
-    ftol: float = 10
+    ftol: float = .001
     xtol: float = 10
     def __call__(self, window):
         # initial guess
-        if (model := super().__call__(window)) is None:
+        if (initial_guess := super().__call__(window)) is None:
             return None
 
         T0 = window.T0
@@ -141,21 +142,21 @@ class PositionFitter2D(BoundedFitter):
             return np.linalg.norm(position_data - position_pred, axis=0)
 
         try:
-            result = scipy.optimize.least_squares(error, model.initial_condition, loss='cauchy',
+            result = scipy.optimize.least_squares(error, initial_guess.initial_condition, loss='cauchy',
                 bounds=self.bounds, method='dogbox', gtol=self.gtol, xtol=self.xtol, ftol=self.ftol)
             if not result.success:
                 raise ValueError(result.message)
         except ValueError:
             self.display and print("  "*window.popped, self.__class__.__name__, "found no model")
             return None
-
+        self.display and print("  "*window.popped, self.__class__.__name__, "found model", result.message)
         return BallisticModel(result.x, T0, window=window)
 
 @dataclass
 class FilterInliers:
     distance_threshold: float = 20
     display: bool = False
-
+    min_first_model_inliers = 3
     def __call__(self, window):
         if (model := super().__call__(window)) is None:
             return None
@@ -164,21 +165,27 @@ class FilterInliers:
         inliers_mask = position_error < self.distance_threshold
         self.display and print("  "*window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
         with np.printoptions(precision=0, suppress=True, nanstr='-'):
-            message = "Too many, returning No model." if np.sum(inliers_mask) < 3 else ""
-            self.display and print(f"initial 2D inliers (POSITION-ONLY model fitting error: {position_error}). {message}", flush=True)
+            message = "Too many, returning No model." if np.sum(inliers_mask) < self.min_first_model_inliers else ""
+            message = f"initial 2D inliers (POSITION-ONLY model fitting error: {position_error}). {message}"
+            self.display and print(message, flush=True)
+            model.message = message
+            model.window[0].models.append(model)
 
-        if np.sum(inliers_mask) < 3:
+        if np.sum(inliers_mask) < self.min_first_model_inliers:
             return None
 
         window.mask = inliers_mask
         return model
 
+
+
 @dataclass
 class PositionAndDiameterFitter2D(BoundedFitter):
     d_error_weight: float = 1
-    underground_penalty_factor: float = 100
     optimizer_kwargs: dict = field(default_factory=dict)
     tol: float = 1
+    dummy_initial_guess: bool = True
+    mask: bool = True
 
     @cached_property
     def error_fct(self):
@@ -188,9 +195,13 @@ class PositionAndDiameterFitter2D(BoundedFitter):
         if (initial_guess := super().__call__(window)) is None:
             return None
 
-        timestamps = window.timestamps
         T0 = window.T0
-        initial_guess = BallisticModel(np.array([*Point3D(window.points3D[:,0]).to_int_tuple(), 0, 0, 0]), T0)
+        mask = window.mask if self.mask else np.ones((len(window),), dtype=bool)
+        timestamps = window.timestamps
+        if self.dummy_initial_guess:
+            initial_guess = BallisticModel(np.array([*Point3D(window.points3D[:,0]).to_int_tuple(), 0, 0, 0]), T0)
+
+
         position_data = window.calib.project_3D_to_2D(window.points3D)
         diameter_data = compute_length2D(window.K, window.RT, window.points3D, BALL_DIAMETER, points2D=position_data)
 
@@ -204,23 +215,54 @@ class PositionAndDiameterFitter2D(BoundedFitter):
             diameter_pred = compute_length2D(window.K, window.RT, points3D, BALL_DIAMETER, points2D=position_pred)
             diameter_error = np.abs(diameter_data - diameter_pred)
 
-            underground_balls = points3D.z > BALL_DIAMETER/2  # z points downward
-            underground_penalty = self.underground_penalty_factor * np.sum(points3D.z[underground_balls])
+            position_error = position_error[~np.isnan(position_error) & mask]
+            diameter_error = diameter_error[~np.isnan(diameter_error) & mask]
 
-            position_error = position_error[~np.isnan(position_error)]
-            diameter_error = diameter_error[~np.isnan(diameter_error)]
-
-            return self.error_fct(position_error, diameter_error) + underground_penalty
+            return self.error_fct(position_error, diameter_error)
 
         bounds = list(zip(*self.bounds))
+
         result = scipy.optimize.minimize(error, initial_guess.initial_condition, bounds=bounds, **{**{'tol': self.tol}, **self.optimizer_kwargs})
         if not result.success:
             self.display and print("  "*window.popped, self.__class__.__name__, "found no model", result.message, result.x)
             return None
-
+        self.display and print("Error", result['fun'])
         return BallisticModel(result.x, T0, window=window)
 
 
+@dataclass
+class FitterFromGroundTruth(PositionAndDiameterFitter2D):
+    def __call__(self, window):
+
+        ball0 = window[0].ball_annotations[0]
+        ball1 = window[-1].ball_annotations[0]
+        p0 = ball0.center
+        p1 = ball1.center
+        T0 = window[0].timestamps[ball0.camera]
+        T1 = window[-1].timestamps[ball1.camera]
+        g = 9.81 * 100/(1000*1000) # m/s² => cm/ms²
+        v0 = (p1 - p0)/(T1 - T0) - Point3D(0,0,g*(T1 - T0)/2)
+        model = BallisticModel(np.vstack((p0, v0)).flatten(), T0, window=window)
+
+        annotated_points3D = model(window.timestamps)
+        predicted_points3D = window.points3D
+
+        p_error = np.linalg.norm(window.calib.project_3D_to_2D(annotated_points3D) - window.calib.project_3D_to_2D(predicted_points3D), axis=0)
+        d_error = compute_length2D(window.K, window.RT, predicted_points3D, BALL_DIAMETER) - compute_length2D(window.K, window.RT, annotated_points3D, BALL_DIAMETER)
+
+
+        model = super().__call__(window)
+
+        with np.printoptions(precision=0, suppress=True, nanstr='-'):
+            self.display and print("GT p_error", p_error)
+            self.display and print("GT d_error", d_error)
+            mask = window.mask if self.mask else np.ones((len(window),), dtype=bool)
+            p_error = p_error[~np.isnan(p_error) & mask]
+            d_error = d_error[~np.isnan(d_error) & mask]
+            self.display and print("mask", mask)
+            self.display and print("GT error", self.error_fct(p_error, d_error))
+
+        return model
 
 repr_dict = {
     (True, True): 'ʘ',
@@ -235,7 +277,7 @@ repr_dict = {
 class InliersFiltersSolution:
     max_outliers_ratio: float = 0.4
     min_inliers: int = 2
-    first_inlier: int = 1
+    first_inlier: int = 0
     position_error_threshold: float = 2
     display: bool = False
 
@@ -245,7 +287,6 @@ class InliersFiltersSolution:
 
         position_error = compute_position_error(window, model)
         inliers_mask = position_error < self.position_error_threshold
-        model.window.mask = fill(np.array(inliers_mask))
         self.display and print("  "*window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, inliers_mask[i]] for i, s in enumerate(window)]), end="|\t")
 
         if sum(inliers_mask) < self.min_inliers:
@@ -255,7 +296,15 @@ class InliersFiltersSolution:
             model.window[0].models.append(model)
             return None
 
-        if sum(inliers_mask[0:self.first_inlier]) != self.first_inlier:
+        #model.window.mask = fill(inliers_mask)
+        # New
+        start = np.where(inliers_mask)[0][0]
+        stop = np.where(inliers_mask)[0][-1]
+        model.window = Window([s for s, m in zip(window, fill(inliers_mask)) if m], popped=window.popped+start)
+        model.window.mask = inliers_mask[start:stop+1]
+        # weN
+
+        if self.first_inlier and sum(inliers_mask[0:self.first_inlier]) != self.first_inlier:
             with np.printoptions(precision=0, suppress=True, nanstr='-'):
                 model.message = f"first {self.first_inlier} samples are not inliers (POSITION+DIAMETER model fitting error: {position_error})"
             self.display and print(model.message, flush=True)
@@ -278,7 +327,7 @@ class InliersFiltersSolution:
 @dataclass
 class FilterBallStateSolution:
     min_flyings: int = 1
-    max_nonflyings_ratio: float = 0.8
+    max_nonflyings_ratio: float = 1.0
     display: bool = False
     def __call__(self, window):
         flyings_mask = np.array([s.ball is not None and s.ball.state == BallState.FLYING for s in window])
@@ -340,7 +389,7 @@ class TrajectoryDetector:
             min_window_length (int): minimum window length (in miliseconds).
     """
     def __init__(self, fitter_types, min_window_length, min_distance_px, min_distance_cm,
-                 retries, **fitter_kwargs):
+                 retries=0, **fitter_kwargs):
         self.min_window_length = min_window_length
         self.min_distance_px = min_distance_px
         self.min_distance_cm = min_distance_cm
@@ -368,19 +417,24 @@ class TrajectoryDetector:
                 retries = self.retries
                 while True:
                     sliding_window.enqueue()
-                    if not (new_model := self.fitter(Window(sliding_window, popped=sliding_window.popped))):
+                    if not (new_model := self.fitter(Window(sliding_window, popped=sliding_window.popped))) \
+                     or sum(new_model.window.mask) <= sum(model.window.mask):
                         if retries == 0:
                             break
                         retries = retries - 1
                         self.display and print("  "*sliding_window.popped, "retries:", retries)
                         continue
-                    if len(new_model.window) > len(model.window):
+                    #if len(new_model.window) > len(model.window):
+                    # New
+                    if sum(new_model.window.mask) > sum(model.window.mask):
+                    # weN
                         model = new_model
                         retries = self.retries
 
                 self.display and print("  "*model.window.popped + "|" + " ".join([repr_dict[s.ball_state == BallState.FLYING, True] for i, s in enumerate(model.window)]), end="|\t")
 
-                model.window = Window([sample for sample, mask in zip(model.window, model.window.mask) if mask], popped=model.window.popped + np.where(model.window.mask)[0][0])
+                # removed New
+                #model.window = Window([sample for sample, mask in zip(model.window, model.window.mask) if mask], popped=model.window.popped + np.where(model.window.mask)[0][0])
 
                 # discard model if it is too short
                 curve = model(model.window.timestamps)
@@ -404,5 +458,35 @@ class TrajectoryDetector:
 
         # empty window once generator is fully consumed
         yield from sliding_window
+
+
+class AnnotatedTrajectoryJumper:
+    def __init__(self, fitter_types, min_window_length, min_distance_px, min_distance_cm,
+                 retries=0, **fitter_kwargs):
+        Fitter = make_dataclass("Fitter", [], bases=fitter_types)
+        self.fitter = Fitter(**fitter_kwargs)
+        self.display = fitter_kwargs.get('display', False)
+    def fit_and_yield(self, trajectory):
+        if model := self.fitter(Window(trajectory, popped=0)):
+            for sample in model.window:
+                sample.model = model
+        self.display and print("\n\n")
+        yield from trajectory
+    def __call__(self, gen):
+        trajectory = []
+        for sample in gen:
+            if not sample.ball_annotations:
+                if trajectory:
+                    yield from self.fit_and_yield(trajectory)
+                    trajectory = []
+            else:
+                if  len(trajectory) > 2 \
+                and trajectory[-1].ball_annotations[0].origin == 'annotation'  \
+                and trajectory[-2].ball_annotations[0].origin == 'interpolation' \
+                and sample.ball_annotations[0].origin == 'annotation':
+                    yield from self.fit_and_yield(trajectory)
+                    trajectory = []
+                trajectory.append(sample)
+        yield from trajectory
 
 
