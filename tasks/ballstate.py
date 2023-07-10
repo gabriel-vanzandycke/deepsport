@@ -252,71 +252,8 @@ class ComputeConfusionMatrix(_ComputeConfusionMatrix):
         onehot_true_state = tf.one_hot(batch_ball_state, C)
         super().on_batch_end(predicted_state, onehot_true_state, **_)
 
-
-
-@dataclass
-class ComputeDetectionMetrics(Callback):
-    origin: str = 'ballseg'
-    before = ["AuC", "GatherCycleMetrics"]
-    when = ExperimentMode.EVAL
-    thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
-    def on_cycle_begin(self, **_):
-        self.d_acc = defaultdict(list)
-        self.t_acc = defaultdict(bool) # defaults to False
-
-    def on_batch_end(self, keys, batch_ball, batch_is_ball, predicted_is_ball, **_):
-        for view_key, ball, target_is_ball, predicted in zip(keys, batch_ball, batch_is_ball, predicted_is_ball):
-            if isinstance(view_key.instant_key, InstantKey): # Keep only views from deepsport dataset for evaluation
-                key = (view_key.instant_key, view_key.camera)
-                if ball.origin == self.origin:
-                    self.d_acc[key].append((ball, target_is_ball, predicted))
-                    if np.any(target_is_ball):
-                        self.t_acc[key] = True # balls might be visible on an image despite having been annotated on another.
-                elif ball.origin == 'annotation':
-                    self.t_acc[key] = True
-
-    def on_cycle_end(self, state, **_):
-        for k in [None, 1, 2, 4, 8]:
-            TP = np.zeros((len(self.thresholds), ))
-            FP = np.zeros((len(self.thresholds), ))
-            P = N = 0
-            P_upper_bound = 0
-            for key, zipped in self.d_acc.items():
-                balls, target_is_ball, predicted_is_ball = zip(*zipped)
-                values = [b.value for b in balls]
-                if k is None:
-                    index = np.argmax(values)
-                    P_upper_bound += np.any(target_is_ball)
-                else:
-                    indices = np.argsort(values)[-k:]
-                    index = indices[np.argmax(np.array(predicted_is_ball)[indices])]
-                    values = predicted_is_ball
-                    P_upper_bound += np.any(np.array(target_is_ball)[indices])
-
-                output = (values[index] >= self.thresholds).astype(np.uint8)
-                target = target_is_ball[index]
-                TP +=   target   *  output
-                FP += (1-target) *  output
-
-                has_ball = self.t_acc[key]
-                P  +=   has_ball
-                N  += not has_ball
-
-            name = 'initial_TP_rate_upper_bound' if k is None else f'top{k}_TP_rate_upper_bound'
-            state[name] = P_upper_bound/P
-
-            P = np.array(P)[np.newaxis]
-            N = np.array(N)[np.newaxis]
-            data = {
-                "thresholds": self.thresholds,
-                "FP rate": divide(FP, P + N),  # #-possible cases is the number of images
-                "TP rate": divide(TP, P),      # #-possible cases is the number of images on which there's a ball to detect
-                "precision": divide(TP, TP + FP),
-                "recall": divide(TP, P),
-            }
-
-            name = 'initial_top1_metrics' if k is None else f'top{k}_metrics'
-            state[name] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
+class ComputeDetectionMetrics(ComputeDetectionMetrics_Detection):
+    pass
 
 @dataclass
 class TopkNormalizedGain(Callback):

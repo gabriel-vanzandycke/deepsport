@@ -49,3 +49,27 @@ class CropBlockDividable(ChunkProcessor):
                 w = width//self.block_size*self.block_size
                 h = height//self.block_size*self.block_size
                 chunk[name] = chunk[name][:,:h,0:w]
+
+class HuberLoss(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
+    def __init__(self, y_true, y_pred, name="regression", delta=1.0):
+        self.delta = delta # required to print config
+        self.loss = tf.keras.losses.Huber(delta=delta, name='huber_loss')
+        self.y_true = y_true
+        self.y_pred = y_pred
+        self.name = name
+    def __call__(self, chunk):
+        mask = tf.math.logical_not(tf.math.is_nan(chunk[self.y_true]))
+        losses = self.loss(y_true=chunk[self.y_true][mask], y_pred=chunk[self.y_pred][mask])
+        chunk[f"{self.name}_loss"] = tf.reduce_mean(losses)#tf.where(tf.math.is_nan(losses), tf.zeros_like(losses), losses)
+
+class BinaryCrossEntropyLoss(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
+    def __init__(self, y_true, y_pred, from_logits=True, name='bce'):
+        self.y_true = y_true
+        self.y_pred = y_pred
+        self.name = name
+        self.from_logits = from_logits
+    def __call__(self, chunk):
+        # TODO: check if binary crossentropy fits the unconfident targets
+        chunk[f"{self.name}_loss"] = tf.keras.losses.binary_crossentropy(y_true=chunk[self.y_true], y_pred=chunk[self.y_pred], from_logits=self.from_logits)
