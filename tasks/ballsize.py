@@ -227,7 +227,3 @@ class RegressionLoss(ChunkProcessor):
         chunk["regression_loss"] = tf.reduce_mean(losses)#tf.where(tf.math.is_nan(losses), tf.zeros_like(losses), losses)
         losses = self.height_loss(y_true=chunk["batch_ball_height"][mask], y_pred=chunk["predicted_height"][mask])
         chunk["height_regression_loss"] = tf.reduce_mean(losses)
-
-class AddIsBallTargetFactory(Transform):
-    def __call__(self, view_key: ViewKey, view: View):
-        return {"is_ball": 1 if view.ball.origin == 'annotation' else 0}
