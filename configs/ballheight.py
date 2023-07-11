@@ -20,24 +20,23 @@ experiment_type = [
 batch_size = 16
 
 # Dataset parameters
-side_length = 64
+side_length = 224
 output_shape = (side_length, side_length)
 
 estimate_diameter = False
 estimate_presence = False
 full_dataset = False
 with_diff = False
-draw_cues = True
+draw_vertical_cues = False
 
 # DeepSport Dataset
-dataset_name = "ballsize_dataset.pickle"
+dataset_name = f"ballsize_dataset_640_{'with' if estimate_presence else 'no'}_detections.pickle"
 scale = .5
 size_min = 14*scale
 size_max = 40*scale
 max_shift = 0
 transforms = [
     deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
-        draw_cues=draw_cues,
         output_shape=output_shape,
         size_min=size_min,
         size_max=size_max,
@@ -48,8 +47,8 @@ transforms = [
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddNextImageFactory() if with_diff else None,
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory() if estimate_diameter else None,
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallHeightFactory(),
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(origins=['annotation', 'interpolation', 'ballseg']) if estimate_diameter else None,
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallHeightFactory(origins=['annotation', 'interpolation', 'ballseg']),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
@@ -62,9 +61,9 @@ validation_pc = 15
 testing_arena_labels = []
 dataset = experimentator.CachedPickledDataset(find(dataset_name))
 dataset = mlwf.FilteredDataset(dataset, lambda k: full_dataset or bool(isinstance(k[0], deepsport_utilities.ds.instants_dataset.InstantKey) and "KS-FR-" in k.arena_label))
-dataset = mlwf.FilteredDataset(dataset, lambda k,v: estimate_presence or v.ball.origin in ['annotation', 'interpolation'] and bool(v.ball.visible))
+dataset = mlwf.FilteredDataset(dataset, lambda k,v: estimate_presence or v.ball.origin in ['annotation', 'interpolation'])
 globals().update(locals()) # required to use locals() in lambdas
-dataset = mlwf.TransformedDataset(dataset, transforms) # CachedDataset fails for whatever reason
+dataset = mlwf.TransformedDataset(dataset, transforms)
 
 fold = 0
 
@@ -80,7 +79,7 @@ callbacks = [
     experimentator.SaveWeights(),
     experimentator.SaveLearningRate(),
     experimentator.GatherCycleMetrics(),
-    #experimentator.LogStateDataCollector(),
+    experimentator.LogStateDataCollector(),
     experimentator.LearningRateDecay(start=range(20,101,10), duration=2, factor=.5),
     tasks.ballheight.ComputeHeightError(),
     tasks.detection.ComputeDetectionMetrics(origin='ballseg') if estimate_presence else None,
@@ -92,8 +91,8 @@ callbacks = [
     experimentator.wandb_experiment.LogStateWandB("validation_MAPE", False),
 ]
 
-alpha = 0.5 if estimate_presence else None
-beta = 0.5 if estimate_diameter else None
+alpha = 0.5 if estimate_presence else 0
+beta = 0.5 if estimate_diameter else 0
 globals().update(locals()) # required to use locals() in lambdas
 chunk_processors = [
     experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_input_image2"]),
