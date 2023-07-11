@@ -84,6 +84,7 @@ class ComputeDiameterError(Callback):
     when = ExperimentMode.EVAL
     def on_cycle_begin(self, **_):
         self.acc = defaultdict(lambda: [])
+        self.evaluation_data = []
     def on_batch_end(self, predicted_diameter, batch_ball_size, batch_ball_position, batch_calib, **_):
         for true_diameter, diameter, ball_position, calib in zip(batch_ball_size, predicted_diameter, batch_ball_position, batch_calib):
             if np.isnan(true_diameter):
@@ -100,6 +101,14 @@ class ComputeDiameterError(Callback):
             self.acc["diameter_error"].append(diameter - true_diameter)
             self.acc["projection_error"].append(projection_error)
             self.acc["relative_error"].append(relative_error)
+            self.acc["world_error"].append(np.linalg.norm(ball - predicted_position))
+
+            self.evaluation_data.append({
+                "ball": ball,
+                "calib": calib,
+                "predicted_diameter": diameter,
+            })
+
     def on_cycle_end(self, state, **_): # state in R/W mode
         try:
             df = pandas.DataFrame(np.vstack(list(self.acc.values())).T, columns=self.acc.keys())
@@ -107,6 +116,12 @@ class ComputeDiameterError(Callback):
             state["MADE"] = np.mean(np.abs(df['diameter_error']))
             state["MAPE"] = np.mean(np.abs(df['projection_error']))
             state["MARE"] = np.mean(np.abs(df['relative_error']))
+            state["MAWE"] = np.mean(np.abs(df['world_error']))
+            state["mADE"] = np.median(np.abs(df['diameter_error']))
+            state["mAPE"] = np.median(np.abs(df['projection_error']))
+            state["mARE"] = np.median(np.abs(df['relative_error']))
+            state["mAWE"] = np.median(np.abs(df['world_error']))
+            state['evaluation_data'] = self.evaluation_data
         except ValueError:
             state["ball_size_metrics"] = None
             for name in ["MADE", "MAPE", "MARE"]:
