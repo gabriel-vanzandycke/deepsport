@@ -51,6 +51,10 @@ def compute_projection_error(true_center: Point3D, pred_center: Point3D):
     difference = true_center - pred_center
     return np.linalg.norm(difference[0:2], axis=0)*np.sign(difference.z)
 
+def compute_relative_error(camera_center: Point3D, true_center: Point3D, pred_center: Point3D):
+    num = np.linalg.norm(true_center - pred_center)
+    den = np.linalg.norm(true_center - camera_center)
+    return num/den
 
 class ComputeHeightError(Callback):
     before = ["GatherCycleMetrics"]
@@ -72,6 +76,8 @@ class ComputeHeightError(Callback):
             self.acc['predicted_height'].append(height)
             self.acc["height_error"].append(height - true_height)
             self.acc["projection_error"].append(projection_error)
+            self.acc["relative_error"].append(compute_relative_error(calib.C, ball, predicted_position))
+            self.acc["world_error"].append(np.linalg.norm(ball - predicted_position))
 
             self.evaluation_data.append({
                 "ball": ball,
@@ -82,12 +88,18 @@ class ComputeHeightError(Callback):
         try:
             df = pandas.DataFrame(np.vstack(list(self.acc.values())).T, columns=self.acc.keys())
             state["evaluation_metrics"] = df
-            state["MAHE"] = np.mean(np.abs(df['predicted_height'] - df['true_height']))
+            state["MAHE"] = np.mean(np.abs(df['height_error']))
             state["MAPE"] = np.mean(np.abs(df['projection_error']))
+            state["MARE"] = np.mean(np.abs(df['relative_error']))
+            state["MAWE"] = np.mean(np.abs(df['world_error']))
+            state["mAHE"] = np.median(np.abs(df['height_error']))
+            state["mAPE"] = np.median(np.abs(df['projection_error']))
+            state["mARE"] = np.median(np.abs(df['relative_error']))
+            state["mAWE"] = np.median(np.abs(df['world_error']))
             state['evaluation_data'] = self.evaluation_data
         except ValueError:
             state["evaluation_metrics"] = None
-            for name in ["MAPE", "MAHE"]:
+            for name in ["MAPE", "MAHE", "MARE", "MAWE", "mAPE", "mAHE", "mARE", "mAWE"]:
                 state[name] = np.nan
 
 class HeightEstimationNamedOutputs(ChunkProcessor):
