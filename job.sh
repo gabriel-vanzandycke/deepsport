@@ -5,7 +5,7 @@
 #SBATCH --mem=60G
 #SBATCH --gres="gpu:1"
 #SBATCH --partition=gpu
-#SBATCH --exclude=mb-mil102
+#SBATCH --exclude=mb-mil102,mb-rom101,mb-rom102,mb-rom103
 
 #workers=`echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l`
 workers=0
