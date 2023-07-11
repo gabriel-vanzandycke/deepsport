@@ -53,10 +53,11 @@ transforms = [
 dataset_splitter_str = 'deepsport'
 validation_pc = 15
 testing_arena_labels = []
-dataset = mlwf.PickledDataset(find(dataset_name))
+dataset = experimentator.CachedPickledDataset(find(dataset_name))
+dataset = mlwf.FilteredDataset(dataset, lambda k: full_dataset or bool(isinstance(k[0], deepsport_utilities.ds.instants_dataset.InstantKey) and "KS-FR-" in k.arena_label))
 dataset = mlwf.FilteredDataset(dataset, lambda k,v: estimate_presence or v.ball.origin in ['annotation', 'interpolation'] and bool(v.ball.visible))
 globals().update(locals()) # required to use locals() in lambdas
-dataset = mlwf.TransformedDataset(dataset, transforms) # CachedDataset fails for whatever reason
+dataset = mlwf.TransformedDataset(dataset, transforms)
 fold = 0
 dataset_splitter = {
     "deepsport": deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage='training' if full_dataset else 'skip', validation_pc=validation_pc),
