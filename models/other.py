@@ -21,6 +21,17 @@ class GammaAugmentation(ChunkProcessor):
     def __call__(self, chunk):
         self.color_augmentation(chunk)
 
+class ExtractCenterFeatures(ChunkProcessor):
+    def __init__(self, proportion, tensor_name='batch_logits'):
+        self.tensor_name = tensor_name
+        self.proportion = proportion
+    def __call__(self, chunk):
+        if self.proportion == 1:
+            return
+        _, H, W, _ = chunk[self.tensor_name].shape
+        x_slice = slice(int((1-self.proportion)*W/2), int((1+self.proportion)*W/2))
+        y_slice = slice(int((1-self.proportion)*H/2), int((1+self.proportion)*H/2))
+        chunk[self.tensor_name] = chunk[self.tensor_name][:,y_slice,x_slice,:]
 
 class LeNetHead(ChunkProcessor):
     def __init__(self, output_features, name='batch', input_tensor='batch_logits'):

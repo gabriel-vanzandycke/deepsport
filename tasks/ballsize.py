@@ -20,16 +20,28 @@ BALL_DIAMETER = 23
 
 
 class BallSizeEstimation(TensorflowExperiment):
-    batch_metrics_names = ["predicted_is_ball", "predicted_height", "predicted_diameter", "regression_loss", "classification_loss"]
-    batch_outputs_names = ["predicted_diameter", "predicted_is_ball", "predicted_height"]
+    batch_metrics_names = ["predicted_is_ball", "predicted_height", "predicted_diameter", "regression_loss", "classification_loss", "mask_loss"]
+    batch_outputs_names = ["predicted_diameter", "predicted_is_ball", "predicted_height", "predicted_mask"]
     @cached_property
     def batch_inputs_names(self):
         batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image", "epoch"]
         if self.cfg.get('with_diff', None):
             batch_inputs_names += ["batch_input_image2"]
-        if self.cfg.get('predict_height', False):
+        if self.cfg.get('estimate_height', False):
             batch_inputs_names += ["batch_ball_height"]
+        if self.cfg.get('estimate_mask', False):
+            batch_inputs_names += ["batch_target"]
         return batch_inputs_names
+
+    # def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
+    #     if subset.type == SubsetType.EVAL or self.balancer is None:
+    #         yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
+    #     else:
+    #         batch_size = batch_size or self.batch_size
+    #         keys_gen = BallStateClassification.balanced_keys_generator(subset.shuffled_keys(), self.balancer, subset.query_item)
+    #         # yields pairs of (keys, data)
+    #         yield from subset.batches(keys=keys_gen, batch_size=batch_size, *args, **kwargs)
+
 
     def train(self, *args, **kwargs):
         self.cfg['testing_arena_labels'] = self.cfg['dataset_splitter'].testing_arena_labels
@@ -127,52 +139,6 @@ class ComputeDiameterError(Callback):
             for name in ["MADE", "MAPE", "MARE"]:
                 state[name] = np.nan
 
-class ComputeJointError(Callback):
-    before = ["GatherCycleMetrics"]
-    when = ExperimentMode.EVAL
-    def on_cycle_begin(self, **_):
-        self.acc = defaultdict(lambda: [])
-        self.data = []
-    def on_batch_end(self, predicted_height, predicted_diameter, batch_ball_height, batch_ball_size, batch_ball_position, batch_calib, **_):
-        for true_height, true_diameter, diameter, height, ball_position, calib in zip(batch_ball_height, batch_ball_size, predicted_diameter, predicted_height, batch_ball_position, batch_calib):
-            if np.isnan(true_diameter):
-                continue
-
-            ball = Point3D(ball_position)
-
-            #predicted_position = compute_point3D_from_height(calib, calib.project_3D_to_2D(ball), height)
-            #projection_error = compute_projection_error(ball, predicted_position)[0]
-
-            predicted_position = compute_point3D_from_diameter(calib, calib.project_3D_to_2D(ball), diameter, BALL_DIAMETER)
-            projection_error = compute_projection_error(ball, predicted_position)[0]
-
-            self.acc["true_height"].append(true_height)
-            self.acc["true_diameter"].append(true_diameter)
-            self.acc['predicted_height'].append(height)
-            self.acc["predicted_diameter"].append(diameter)
-            self.acc["height_error"].append(height - true_height)
-            self.acc["diameter_error"].append(diameter - true_diameter)
-            self.acc["projection_error"].append(projection_error)
-
-            self.data.append({
-                "ball": ball,
-                "calib": calib,
-                "predicted_diameter": diameter,
-                "predicted_height": height,
-            })
-    def on_cycle_end(self, state, **_): # state in R/W mode
-        try:
-            df = pandas.DataFrame(np.vstack(list(self.acc.values())).T, columns=self.acc.keys())
-            state["ball_size_metrics"] = df
-            state["MADE"] = np.mean(np.abs(df['predicted_diameter'] - df['true_diameter']))
-            state["MAHE"] = np.mean(np.abs(df['predicted_height'] - df['true_height']))
-            state["MAPE"] = np.mean(np.abs(df['projection_error']))
-            state['tbd'] = self.data
-        except ValueError:
-            state["ball_size_metrics"] = None
-            for name in ["MADE", "MAPE", "MARE"]:
-                state[name] = np.nan
-
 @dataclass
 class ComputeDetectionMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
@@ -211,14 +177,57 @@ class ComputeDetectionMetrics(Callback):
         state["top1_metrics"] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
 
 
-class NamedOutputs(ChunkProcessor):
-    def __init__(self, input_name='batch_logits'):
-        self.input_name = input_name
+class SegmentationHead(ChunkProcessor):
+    def __init__(self):
+        pass
+        #self.model = tf.keras.Sequential([
+        #    tf.keras.layers.Conv2D(filters=depth_to_space*depth_to_space, kernel_size=1),
+        #    tf.keras.layers.Lambda(lambda x: tf.nn.depth_to_space(x, depth_to_space))
+        #])
     def __call__(self, chunk):
-        chunk["predicted_diameter"] = chunk[self.input_name][...,0]
-        chunk["predicted_is_ball"] = chunk[self.input_name][...,1]
-        if chunk[self.input_name].shape[-1] == 3:
-            chunk["predicted_height"] = chunk[self.input_name][...,2]
+        target = chunk["batch_target"]
+        output = chunk["batch_logits"]
+
+        chunk["segmentation_loss"]
+
+class MaskSupervision(ChunkProcessor):
+    def __call__(self, chunk):
+        x, y, d = chunk['predicted_xoffset'], chunk['predicted_yoffset'], chunk['predicted_diameter']
+        _, H, W = chunk['batch_target'].shape
+        x_range = tf.range(-W//2, W//2, dtype=tf.float32)+.5
+        y_range = tf.range(-H//2, H//2, dtype=tf.float32)+.5
+        X, Y = tf.meshgrid(x_range, y_range)
+        predicted_mask = tf.where((X[tf.newaxis]-x[:,tf.newaxis,tf.newaxis])**2+(Y[tf.newaxis]-y[:,tf.newaxis,tf.newaxis])**2 < (d[:,tf.newaxis,tf.newaxis]/2)**2, 1, 0)
+        chunk['predicted_mask'] = tf.cast(predicted_mask, tf.float32)
+        mask = tf.math.logical_not(tf.math.is_nan(chunk["batch_ball_size"]))
+        loss_map = tf.keras.losses.binary_crossentropy(chunk["batch_target"][...,tf.newaxis], chunk['predicted_mask'][...,tf.newaxis], False)
+        loss = tf.reduce_mean(loss_map, axis=[1,2])
+        chunk['mask_loss'] = tf.reduce_mean(loss[mask])
+
+class NamedOutputs(ChunkProcessor):
+    def __init__(self, input_name='batch_logits',
+                 estimate_height=False,
+                 estimate_presence=False,
+                 estimate_mask=False):
+        self.input_name = input_name
+        self.estimate_presence = estimate_presence
+        self.estimate_height = estimate_height
+        self.estimate_mask = estimate_mask
+
+    def __call__(self, chunk):
+        i = 0
+        chunk["predicted_diameter"] = chunk[self.input_name][...,i]
+        if self.estimate_presence:
+            i += 1
+            chunk["predicted_is_ball"] = chunk[self.input_name][...,i]
+        if self.estimate_height:
+            i += 1
+            chunk["predicted_height"] = chunk[self.input_name][...,i]
+        if self.estimate_mask:
+            i += 1
+            chunk["predicted_xoffset"] = chunk[self.input_name][...,i]
+            i += 1
+            chunk["predicted_yoffset"] = chunk[self.input_name][...,i]
 
 
 class IsBallClassificationLoss(ChunkProcessor):
@@ -230,7 +239,7 @@ class IsBallClassificationLoss(ChunkProcessor):
 class ClassificationLoss(IsBallClassificationLoss):
     pass # retrocompatibility
 
-class RegressionLoss(ChunkProcessor):
+class TBDRegressionLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __init__(self, delta=1.0):
         self.delta = delta # required to print config

@@ -461,6 +461,7 @@ class ImportDetectionsTransform(Transform):
         self.transfer_true_position = transfer_true_position
         self.exclusive = exclusive
         self.database = {}
+        self.distances = []
 
     def extract_pseudo_annotation(self, detections: Ball, ball_state=BallState.NONE):
         camera = np.array([d.camera for d in detections])
@@ -498,7 +499,9 @@ class ImportDetectionsTransform(Transform):
     def set_true_position(self, calibs, detections, ball):
         for d in detections:
             projected = lambda ball: calibs[d.camera].project_3D_to_2D(ball.center)
-            if np.linalg.norm(projected(d) - projected(ball)) < self.proximity_threshold:
+            proximity = np.linalg.norm(projected(d) - projected(ball))
+            if proximity < self.proximity_threshold:
+                self.distances.append(proximity)
                 d.center = ball.center
 
     def __call__(self, instant_key, instant):

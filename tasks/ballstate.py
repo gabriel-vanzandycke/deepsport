@@ -20,7 +20,7 @@ from deepsport_utilities.dataset import Subset, SubsetType, find
 from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.transforms import Transform
 from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantKey
-from tasks.detection import divide
+from tasks.detection import divide, ComputeDetectionMetrics as _ComputeDetectionMetrics
 from tasks.classification import ComputeClassifactionMetrics as _ComputeClassifactionMetrics, ComputeConfusionMatrix as _ComputeConfusionMatrix
 
 class StateOnlyBalancer():
@@ -179,21 +179,6 @@ class AddSingleBallStateFactory(Transform):
         return {"ball_state": [1] if predicate(view.ball) else [0]}
 
 
-class AddBallSizeFactory(Transform):
-    def __init__(self, predict_height=False):
-        self.predict_height = predict_height
-    def __call__(self, view_key, view):
-        ball = view.ball
-        #                        (          either ball is an annotation           or             true ball annotation transferred to detection         )
-        predicate = lambda ball: ( ball.origin in ['annotation', 'interpolation']  or  (ball.origin in ['pifball', 'ballseg'] and ball.center.z < -10)  ) \
-            and ball.visible is not False and view.calib.projects_in(ball.center)
-        data = {"ball_size": view.calib.compute_length2D(ball.center, BALL_DIAMETER)[0] if predicate(ball) else np.nan}
-        if self.predict_height:
-            center2D = view.calib.project_3D_to_2D(ball.center)
-            ground2D = view.calib.project_3D_to_2D(Point3D(ball.center.x, ball.center.y, 0))
-            data["ball_height"] = np.linalg.norm(center2D - ground2D) if predicate(ball) else np.nan
-        return data
-
 class AddIsBallTargetFactory(Transform):
     def __init__(self, unconfident_margin=.1, proximity_threshold=10):
         self.unconfident_margin = unconfident_margin
@@ -252,7 +237,7 @@ class ComputeConfusionMatrix(_ComputeConfusionMatrix):
         onehot_true_state = tf.one_hot(batch_ball_state, C)
         super().on_batch_end(predicted_state, onehot_true_state, **_)
 
-class ComputeDetectionMetrics(ComputeDetectionMetrics_Detection):
+class ComputeDetectionMetrics(_ComputeDetectionMetrics):
     pass
 
 @dataclass
