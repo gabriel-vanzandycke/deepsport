@@ -38,7 +38,6 @@ transforms = [
         size_max=size_max,
         margin=side_length//2-max_shift,
         padding=side_length,
-        on_ball=True,
     ),
     deepsport_utilities.transforms.DataExtractorTransform(
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
@@ -58,7 +57,9 @@ dataset = mlwf.FilteredDataset(dataset, lambda k: full_dataset or bool(isinstanc
 dataset = mlwf.FilteredDataset(dataset, lambda k,v: estimate_presence or v.ball.origin in ['annotation', 'interpolation'] and bool(v.ball.visible))
 globals().update(locals()) # required to use locals() in lambdas
 dataset = mlwf.TransformedDataset(dataset, transforms)
+
 fold = 0
+
 dataset_splitter = {
     "deepsport": deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplitter(additional_keys_usage='training' if full_dataset else 'skip', validation_pc=validation_pc),
     "arenas_specific": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(testing_arena_labels, validation_pc=validation_pc),
