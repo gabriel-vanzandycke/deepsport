@@ -62,25 +62,25 @@ class ComputeHeightError(Callback):
     def on_cycle_begin(self, **_):
         self.acc = defaultdict(lambda: [])
         self.evaluation_data = []
-    def on_batch_end(self, predicted_height, batch_ball_height, batch_ball_position, batch_calib, **_):
-        for true_height, height, ball_position, calib in zip(batch_ball_height, predicted_height, batch_ball_position, batch_calib):
+    def on_batch_end(self, predicted_height, batch_ball_height, batch_ball, batch_calib, **_):
+        for true_height, height, ball, calib in zip(batch_ball_height, predicted_height, batch_ball, batch_calib):
             if np.isnan(true_height):
                 continue
 
-            ball = Point3D(ball_position)
+            center = ball.center
 
-            predicted_position = compute_point3D_from_height(calib, calib.project_3D_to_2D(ball), height)
-            projection_error = compute_projection_error(ball, predicted_position)[0]
+            predicted_position = compute_point3D_from_height(calib, calib.project_3D_to_2D(center), height)
+            projection_error = compute_projection_error(center, predicted_position)[0]
 
             self.acc["true_height"].append(true_height)
             self.acc['predicted_height'].append(height)
             self.acc["height_error"].append(height - true_height)
             self.acc["projection_error"].append(projection_error)
-            self.acc["relative_error"].append(compute_relative_error(calib.C, ball, predicted_position))
-            self.acc["world_error"].append(np.linalg.norm(ball - predicted_position))
+            self.acc["relative_error"].append(compute_relative_error(calib.C, center, predicted_position))
+            self.acc["world_error"].append(np.linalg.norm(center - predicted_position))
 
             self.evaluation_data.append({
-                "ball": ball,
+                "ball": ball.center,
                 "calib": calib,
                 "predicted_height": height,
             })
