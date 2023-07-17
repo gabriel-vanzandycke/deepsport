@@ -76,7 +76,7 @@ class BallStateClassification(TensorflowExperiment):
 
 class BallStateAndBallSizeExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_input_image", "batch_input_image2", "batch_ball_height",
-                          "batch_is_ball", "batch_ball_size", "batch_ball_state"]
+                          "batch_is_ball", "batch_ball_size", "batch_ball_state", "batch_ball_position"]
     batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "predicted_state", "predicted_height"
                            "regression_loss", "classification_loss", "state_loss"]
     batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state", "predicted_height"]
