@@ -43,7 +43,6 @@ transforms = [
         deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(origins=['annotation', 'interpolation', 'ballseg']),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddIsBallTargetFactory() if estimate_presence else None,
     )

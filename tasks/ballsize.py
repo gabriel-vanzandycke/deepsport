@@ -24,7 +24,7 @@ class BallSizeEstimation(TensorflowExperiment):
     batch_outputs_names = ["predicted_diameter", "predicted_is_ball", "predicted_height", "predicted_mask"]
     @cached_property
     def batch_inputs_names(self):
-        batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image", "epoch"]
+        batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image", "epoch", "batch_ball_position"]
         if self.cfg.get('with_diff', None):
             batch_inputs_names += ["batch_input_image2"]
         if self.cfg.get('estimate_height', False):
@@ -97,26 +97,26 @@ class ComputeDiameterError(Callback):
     def on_cycle_begin(self, **_):
         self.acc = defaultdict(lambda: [])
         self.evaluation_data = []
-    def on_batch_end(self, predicted_diameter, batch_ball_size, batch_ball_position, batch_calib, **_):
-        for true_diameter, diameter, ball_position, calib in zip(batch_ball_size, predicted_diameter, batch_ball_position, batch_calib):
+    def on_batch_end(self, predicted_diameter, batch_ball_size, batch_ball, batch_calib, **_):
+        for true_diameter, diameter, ball, calib in zip(batch_ball_size, predicted_diameter, batch_ball, batch_calib):
             if np.isnan(true_diameter):
                 continue
 
-            ball = Point3D(ball_position)
+            center = ball.center
 
-            predicted_position = compute_point3D_from_diameter(calib, calib.project_3D_to_2D(ball), diameter, BALL_DIAMETER)
-            projection_error = compute_projection_error(ball, predicted_position)[0]
-            relative_error = compute_relative_error(calib, ball, diameter)
+            predicted_position = compute_point3D_from_diameter(calib, calib.project_3D_to_2D(center), diameter, BALL_DIAMETER)
+            projection_error = compute_projection_error(center, predicted_position)[0]
+            relative_error = compute_relative_error(calib, center, diameter)
 
             self.acc["true_diameter"].append(true_diameter)
             self.acc["predicted_diameter"].append(diameter)
             self.acc["diameter_error"].append(diameter - true_diameter)
             self.acc["projection_error"].append(projection_error)
             self.acc["relative_error"].append(relative_error)
-            self.acc["world_error"].append(np.linalg.norm(ball - predicted_position))
+            self.acc["world_error"].append(np.linalg.norm(center - predicted_position))
 
             self.evaluation_data.append({
-                "ball": ball,
+                "ball": center,
                 "calib": calib,
                 "predicted_diameter": diameter,
             })
@@ -146,8 +146,8 @@ class ComputeDetectionMetrics(Callback):
     thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
     def on_cycle_begin(self, **_):
         self.acc = {"TP": 0, "FP": 0, "TN": 0, "FN": 0, "P": 0, "N": 0}
-    def on_batch_end(self, batch_is_ball, predicted_is_ball, batch_ball_position, batch_has_ball=None, **_):
-        balls, inverse = np.unique(np.array(batch_ball_position), axis=0, return_inverse=True)
+    def on_batch_end(self, batch_is_ball, predicted_is_ball, batch_ball, batch_has_ball=None, **_):
+        balls, inverse = np.unique(np.array(batch_ball), axis=0, return_inverse=True)
         for index, _ in enumerate(balls):
             indices = np.where(inverse==index)[0]
 
@@ -176,21 +176,18 @@ class ComputeDetectionMetrics(Callback):
             }
         state["top1_metrics"] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
 
-
-class SegmentationHead(ChunkProcessor):
+class OffsetSupervision(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __init__(self):
-        pass
-        #self.model = tf.keras.Sequential([
-        #    tf.keras.layers.Conv2D(filters=depth_to_space*depth_to_space, kernel_size=1),
-        #    tf.keras.layers.Lambda(lambda x: tf.nn.depth_to_space(x, depth_to_space))
-        #])
+        self.loss = tf.keras.losses.MeanSquaredError()
     def __call__(self, chunk):
-        target = chunk["batch_target"]
-        output = chunk["batch_logits"]
-
-        chunk["segmentation_loss"]
+        _, H, W, _ = chunk['batch_input'].shape
+        x_true, y_true = chunk['batch_ball_position'][:,0,0] - W//2, chunk['batch_ball_position'][:,1,0] - H//2
+        x_pred, y_pred = chunk['predicted_xoffset'], chunk['predicted_yoffset']
+        chunk["offset_loss"] = self.loss(x_true, x_pred) + self.loss(y_true, y_pred)
 
 class MaskSupervision(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __call__(self, chunk):
         x, y, d = chunk['predicted_xoffset'], chunk['predicted_yoffset'], chunk['predicted_diameter']
         _, H, W = chunk['batch_target'].shape
@@ -239,15 +236,3 @@ class IsBallClassificationLoss(ChunkProcessor):
 class ClassificationLoss(IsBallClassificationLoss):
     pass # retrocompatibility
 
-class TBDRegressionLoss(ChunkProcessor):
-    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
-    def __init__(self, delta=1.0):
-        self.delta = delta # required to print config
-        self.diameter_loss = tf.keras.losses.Huber(delta=delta, name='huber_loss')
-        self.height_loss = tf.keras.losses.Huber(delta=delta, name='huber_loss')
-    def __call__(self, chunk):
-        mask = tf.math.logical_not(tf.math.is_nan(chunk["batch_ball_size"]))
-        losses = self.diameter_loss(y_true=chunk["batch_ball_size"][mask], y_pred=chunk["predicted_diameter"][mask])
-        chunk["regression_loss"] = tf.reduce_mean(losses)#tf.where(tf.math.is_nan(losses), tf.zeros_like(losses), losses)
-        losses = self.height_loss(y_true=chunk["batch_ball_height"][mask], y_pred=chunk["predicted_height"][mask])
-        chunk["height_regression_loss"] = tf.reduce_mean(losses)
