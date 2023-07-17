@@ -24,10 +24,10 @@ experiment_type = [
 ]
 
 estimate_presence = True
+estimate_offset = False
 extract_center = False
 estimate_mask = True
 with_diff = True
-
 
 globals().update(locals()) # required to use 'BallState' in list comprehention
 batch_size = 16
@@ -153,7 +153,7 @@ alpha = None if nstates else (0.5 if estimate_presence else 0)
 center_size = 64
 globals().update(locals()) # required to use locals() in lambdas
 chunk_processors = [
-    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_input_image2", "batch_target"]),
+    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_input_image2", "batch_target", "batch_ball_position"]),
     lambda chunk: chunk.update({'batch_input_diff': tf.subtract(chunk["batch_input_image"], chunk["batch_input_image2"])}) if with_diff else None,
     models.other.GammaAugmentation("batch_input_image"),
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
@@ -165,11 +165,12 @@ chunk_processors = [
     models.other.LeNetHead(name="regression", output_features=5),
     tasks.ballsize.NamedOutputs("regression_logits", estimate_height=False, estimate_presence=estimate_presence, estimate_mask=estimate_mask),
     tasks.ballsize.MaskSupervision() if estimate_mask else None,
+    tasks.ballsize.OffsetSupervision() if estimate_offset else None,
     models.other.BinaryCrossEntropyLoss(y_true="batch_is_ball", y_pred="predicted_is_ball", name="classification") if estimate_presence else None,
     models.other.HuberLoss(y_true='batch_ball_size', y_pred='predicted_diameter', name='regression'),
     lambda chunk: chunk.update({"predicted_state": chunk["classification_logits"]}) if nstates else None,
     tasks.ballstate.StateClassificationLoss() if nstates else \
-        tasks.ballstate.CombineLosses(["classification_loss", "regression_loss", "mask_loss"], weights=[alpha, 1-alpha, 1-alpha]),
+        tasks.ballstate.CombineLosses(["classification_loss", "regression_loss", "mask_loss", "offset_loss"], weights=[alpha, 1-alpha, 1-alpha, 1-alpha]),
     lambda chunk: chunk.update({"predicted_is_ball": tf.nn.sigmoid(chunk["predicted_is_ball"])}) if estimate_presence else None,
     lambda chunk: chunk.update({"predicted_state": tf.nn.sigmoid(chunk["predicted_state"])}) if nstates else None,
 ]
