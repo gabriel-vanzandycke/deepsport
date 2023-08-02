@@ -129,3 +129,109 @@ The **testing-set** should not be used except to evaluate your model and when co
 ## Ball state classification
 
 To be released
+
+
+# License
+
+This project is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License (CC BY-NC-ND 4.0) - visit [https://creativecommons.org/licenses/by-nc-nd/4.0/](https://creativecommons.org/licenses/by-nc-nd/4.0/) for more details.
+
+
+# Citation
+
+If you find this work useful and want to cite it in your own research, projects, or publications, please use the following citation.
+
+Please make sure to comply with the terms of the license when using or referencing this work.
+
+If you have any questions about citing the work or need further information, you should contact me.
+
+
+## Datasets
+
+- Initial DeepSport dataset (315 samples):
+```
+@inproceedings{VanZandycke2019,
+  Author = {Gabriel {Van Zandycke} and Christophe {De Vleeschouwer}},
+  Title = {Real-time CNN-based segmentation architecture for ball detection in a single view setup},
+  Booktitle = {MMSports 2019 - Proceedings of the 2nd International Workshop on Multimedia Content Analysis in Sports, co-located with MM 2019},
+  Year = {2019}
+  DOI = {10.1145/3347318.3355517},
+}
+```
+
+- Extended DeepSport dataset (364 samples):
+```
+@inproceedings{deepsportradar,
+  Author = {Gabriel {Van Zandycke} and Vladimir Somers and Maxime Istasse and Carlo {Del Don} and Davide Zambrano},
+  Title = {DeepSportradar-v1: Computer Vision Dataset for Sports Understanding with High Quality Annotations},
+  Booktitle = {Proceedings of the 5th International ACM Workshop on Multimedia Content Analysis in Sports},
+  Year = {2022},
+  DOI = {10.1145/3552437.3555699},
+}
+```
+
+- Ball 3D localization over ballistic trajectories (233 samples):
+```
+@inproceedings{ball3d,
+  Author = {Gabriel {Van Zandycke} and Christophe {De Vleeschouwer}},
+  Title = {3D Ball Localization From A Single Calibrated Image},
+  Booktitle = {IEEE Computer Society Conference on Computer Vision and Pattern Recognition Workshops},
+  year = {2022}
+  DOI = {10.1109/CVPRW56347.2022.00391},
+}
+```
+
+## Tasks
+
+- Ball detection with a segmentation approach:
+
+```
+@inproceedings{VanZandycke2019,
+  Author = {Gabriel {Van Zandycke} and Christophe {De Vleeschouwer}},
+  Title = {Real-time CNN-based segmentation architecture for ball detection in a single view setup},
+  Booktitle = {MMSports 2019 - Proceedings of the 2nd International Workshop on Multimedia Content Analysis in Sports, co-located with MM 2019},
+  Year = {2019}
+  DOI = {10.1145/3347318.3355517},
+}
+```
+
+- Ball detection with a keypoint detection approach:
+
+```
+@inproceedings{Ghasemzadeh2021,
+  Author = {Abolfazl {S.A. Ghasemzadeh} and Gabriel {Van Zandycke} and Maxime Istasse and Niels Sayez and Amirafshar Moshtaghpour and Christophe {De Vleeschouwer}},
+  Booktitle = {32nd British Machine Vision Conference 2021 (BMVC 2021)},
+  Title = {DeepSportLab: a Unified Framework for Ball Detection, Player Instance Segmentation and Pose Estimation in Team Sports Scenes},
+  Year = {2021}
+}
+```
+
+- Ball 3D localization with a diameter approach method:
+
+```
+@inproceedings{ball3d,
+  Author = {Gabriel {Van Zandycke} and Christophe {De Vleeschouwer}},
+  Title = {3D Ball Localization From A Single Calibrated Image},
+  Booktitle = {IEEE Computer Society Conference on Computer Vision and Pattern Recognition Workshops},
+  year = {2022}
+  DOI = {10.1109/CVPRW56347.2022.00391},
+}
+```
+
+- Ball 3D localization baseline
+
+```
+@inproceedings{deepsportradar,
+  Author = {Gabriel {Van Zandycke} and Vladimir Somers and Maxime Istasse and Carlo {Del Don} and Davide Zambrano},
+  Title = {DeepSportradar-v1: Computer Vision Dataset for Sports Understanding with High Quality Annotations},
+  Booktitle = {Proceedings of the 5th International ACM Workshop on Multimedia Content Analysis in Sports},
+  Year = {2022},
+  DOI = {10.1145/3552437.3555699},
+}
+```
+
+- Ball 3D localization from a single image with a diameter approach:
+
+```
+comming soon
+```
+
