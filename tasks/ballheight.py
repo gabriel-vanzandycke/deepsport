@@ -62,8 +62,8 @@ class ComputeHeightError(Callback):
     def on_cycle_begin(self, **_):
         self.acc = defaultdict(lambda: [])
         self.evaluation_data = []
-    def on_batch_end(self, predicted_height, batch_ball_height, batch_ball, batch_calib, **_):
-        for true_height, height, ball, calib in zip(batch_ball_height, predicted_height, batch_ball, batch_calib):
+    def on_batch_end(self, keys, predicted_height, batch_ball_height, batch_ball, batch_calib, **_):
+        for key, true_height, height, ball, calib in zip(keys, batch_ball_height, predicted_height, batch_ball, batch_calib):
             if np.isnan(true_height):
                 continue
 
@@ -80,7 +80,8 @@ class ComputeHeightError(Callback):
             self.acc["world_error"].append(np.linalg.norm(center - predicted_position))
 
             self.evaluation_data.append({
-                "ball": ball.center,
+                "key": key,
+                "ball": ball,
                 "calib": calib,
                 "predicted_height": height,
             })
