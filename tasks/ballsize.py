@@ -20,7 +20,7 @@ BALL_DIAMETER = 23
 
 
 class BallSizeEstimation(TensorflowExperiment):
-    batch_metrics_names = ["predicted_is_ball", "predicted_height", "predicted_diameter", "regression_loss", "classification_loss", "mask_loss"]
+    batch_metrics_names = ["predicted_is_ball", "predicted_height", "predicted_diameter", "regression_loss", "classification_loss", "mask_loss", "offset_loss"]
     batch_outputs_names = ["predicted_diameter", "predicted_is_ball", "predicted_height", "predicted_mask"]
     @cached_property
     def batch_inputs_names(self):
@@ -47,7 +47,7 @@ class BallSizeEstimation(TensorflowExperiment):
         self.cfg['testing_arena_labels'] = self.cfg['dataset_splitter'].testing_arena_labels
         return super().train(*args, **kwargs)
 
-def compute_point3D_from_diameter(calib: Calib, point2D: Point2D, pixel_size: float, true_size: float):
+def compute_point3D_from_diameter(calib: Calib, point2D: Point2D, pixel_size: float, true_size: float = BALL_DIAMETER):
     point_c = Point2D(calib.Kinv@calib.rectify(point2D).H)
     v = point2D - Point2D(calib.K[0:2,2])
     side2D = point2D + Point2D(v.y, -v.x)/np.linalg.norm(v)*pixel_size
@@ -89,7 +89,6 @@ class PrintMetricsCallback(Callback):
     def on_epoch_end(self, **state):
         print(", ".join([f"{metric}={state[metric]}" for metric in self.metrics]))
 
-
 @dataclass
 class ComputeDiameterError(Callback):
     before = ["GatherCycleMetrics"]
@@ -97,8 +96,8 @@ class ComputeDiameterError(Callback):
     def on_cycle_begin(self, **_):
         self.acc = defaultdict(lambda: [])
         self.evaluation_data = []
-    def on_batch_end(self, predicted_diameter, batch_ball_size, batch_ball, batch_calib, **_):
-        for true_diameter, diameter, ball, calib in zip(batch_ball_size, predicted_diameter, batch_ball, batch_calib):
+    def on_batch_end(self, keys, predicted_diameter, batch_ball_size, batch_ball, batch_calib, **_):
+        for key, true_diameter, diameter, ball, calib in zip(keys, batch_ball_size, predicted_diameter, batch_ball, batch_calib):
             if np.isnan(true_diameter):
                 continue
 
@@ -116,7 +115,8 @@ class ComputeDiameterError(Callback):
             self.acc["world_error"].append(np.linalg.norm(center - predicted_position))
 
             self.evaluation_data.append({
-                "ball": center,
+                "key": key,
+                "ball": ball,
                 "calib": calib,
                 "predicted_diameter": diameter,
             })
@@ -205,9 +205,11 @@ class NamedOutputs(ChunkProcessor):
     def __init__(self, input_name='batch_logits',
                  estimate_height=False,
                  estimate_presence=False,
-                 estimate_mask=False):
+                 estimate_mask=False,
+                 estimate_offset=False):
         self.input_name = input_name
         self.estimate_presence = estimate_presence
+        self.estimate_offset = estimate_offset
         self.estimate_height = estimate_height
         self.estimate_mask = estimate_mask
 
@@ -220,7 +222,7 @@ class NamedOutputs(ChunkProcessor):
         if self.estimate_height:
             i += 1
             chunk["predicted_height"] = chunk[self.input_name][...,i]
-        if self.estimate_mask:
+        if self.estimate_mask or self.estimate_offset:
             i += 1
             chunk["predicted_xoffset"] = chunk[self.input_name][...,i]
             i += 1
