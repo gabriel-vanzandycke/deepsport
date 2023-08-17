@@ -138,10 +138,10 @@ class ComputeDetectionMetrics(Callback):
             for key, zipped in self.d_acc.items():
                 balls, target_is_ball, predicted_is_ball = zip(*zipped)
                 values = [b.value for b in balls]
-                if k is None:
+                if k is None: # Detection rate of the initial detector
                     index = np.argmax(values)
                     P_upper_bound += np.any(target_is_ball)
-                else:
+                else: # Detection rate of the top-k strategy
                     indices = np.argsort(values)[-k:]
                     index = indices[np.argmax(np.array(predicted_is_ball)[indices])]
                     values = predicted_is_ball
@@ -157,7 +157,7 @@ class ComputeDetectionMetrics(Callback):
                 N  += not has_ball
 
             name = 'initial_TP_rate_upper_bound' if k is None else f'top{k}_TP_rate_upper_bound'
-            state[name] = P_upper_bound/P
+            state[name] = P_upper_bound/P if P > 0 else 0
 
             P = np.array(P)[np.newaxis]
             N = np.array(N)[np.newaxis]
@@ -451,7 +451,7 @@ class ImportDetectionsTransform(Transform):
     def __init__(self, dataset_folder, filename, proximity_threshold=15,
                  estimate_pseudo_annotation=True, remove_true_positives=True,
                  remove_duplicates=False, transfer_true_position=False,
-                 exclusive=True):
+                 force_origin=False, exclusive=True):
         self.dataset_folder = dataset_folder
         self.filename = filename
         self.proximity_threshold = proximity_threshold # pixels
@@ -460,6 +460,7 @@ class ImportDetectionsTransform(Transform):
         self.estimate_pseudo_annotation = estimate_pseudo_annotation
         self.transfer_true_position = transfer_true_position
         self.exclusive = exclusive
+        self.force_origin = force_origin
         self.database = {}
         self.distances = []
 
@@ -492,7 +493,7 @@ class ImportDetectionsTransform(Transform):
         kept_detections = []
         for d in detections:
             projected = lambda detection: calibs[d.camera].project_3D_to_2D(detection.center)
-            if not any(np.linalg.norm(projected(d) - projected(d2)) < self.proximity_threshold for d2 in kept_detections):
+            if not any((np.linalg.norm(projected(d) - projected(d2)) < self.proximity_threshold and d.camera == d2.camera) for d2 in kept_detections):
                 kept_detections.append(d)
         return kept_detections
 
@@ -547,15 +548,18 @@ class ImportDetectionsTransform(Transform):
         # Remove true positives
         if self.remove_true_positives and instant.ball:
             cond = lambda detection: np.linalg.norm(detection.point - instant.calibs[detection.camera].project_3D_to_2D(instant.ball.center)) > self.proximity_threshold
-            detections = filter(cond, detections)
+            detections = list(filter(cond, detections))
+
+        if self.force_origin:
+            for d in detections:
+                d.origin = self.force_origin
+
+        if not self.exclusive:
+            detections = getattr(instant, "detections", []) + detections # existing detections take precedence
 
         # Remove duplicates
         if self.remove_duplicates and detections:
             detections = self.keep_unique_detections(instant.calibs, detections)
 
-        if self.exclusive:
-            instant.detections = detections
-        else:
-            instant.detections = getattr(instant, "detections", [])
-            instant.detections.extend(detections)
+        instant.detections = detections
         return instant
