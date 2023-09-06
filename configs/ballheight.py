@@ -29,7 +29,9 @@ estimate_presence = False
 with_diff = False
 draw_vertical_cues = False
 public_dataset = True
+ballistic_dataset = False
 correct_distortion = False
+assert (ballistic_dataset is False) or (public_dataset is False), "annotated ballistic sequences from raw sequences dataset cannot be used when training on public dataset"
 
 # DeepSport Dataset
 dataset_name = {
@@ -82,7 +84,7 @@ random_size_cropper_transform = deepsport_utilities.ds.instants_dataset.BallView
 )
 
 dataset = experimentator.CachedPickledDataset(find(dataset_name))
-dataset = mlwf.FilteredDataset(dataset, lambda k: bool(isinstance(k[0], deepsport_utilities.ds.instants_dataset.InstantKey)))
+dataset = mlwf.FilteredDataset(dataset, lambda k: ballistic_dataset or bool(isinstance(k[0], deepsport_utilities.ds.instants_dataset.InstantKey)))
 dataset = mlwf.FilteredDataset(dataset, lambda k,v: estimate_presence or v.ball.origin in ['annotation', 'interpolation'])
 evaluation_dataset_name = "ballistic_ball_views_512.pickle" # "views_from_instant_sequences_dataset_smoothed_ball_annotation.pickle"
 evaluation_dataset = experimentator.CachedPickledDataset(find(evaluation_dataset_name, verbose=True))

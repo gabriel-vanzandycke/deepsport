@@ -16,7 +16,6 @@ class TensorflowBackbone(ChunkProcessor):
         print(f"Initializing '{model_str}' with {input_shape} input")
         self.model = eval(model_str)(input_shape=input_shape, include_top=self.include_top, *self.args, **self.kwargs) # pylint: disable=eval-used
         #print(self.model.summary())
-
     def __call__(self, chunk):
         if getattr(self, "model", None) is None:
             self.init_model(chunk["batch_input"].get_shape()[1:4])

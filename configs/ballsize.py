@@ -24,8 +24,12 @@ side_length = 64
 output_shape = (side_length, side_length)
 
 estimate_presence = False
-public_dataset = True
-correct_distortion = False
+public_dataset = False
+ballistic_dataset = True
+estimate_mask = True
+estimate_offset = True
+assert (ballistic_dataset is False) or (public_dataset is False), "annotated ballistic sequences from raw sequences dataset cannot be used when training on public dataset"
+
 
 # DeepSport Dataset
 dataset_name = {
@@ -39,13 +43,15 @@ dataset_name = {
 scale = 1
 size_min = 14*scale
 size_max = 37*scale
-max_shift = 0
+max_shift = 10
 
 data_extractor_transform = deepsport_utilities.transforms.DataExtractorTransform(
     deepsport_utilities.ds.instants_dataset.views_transforms.AddImageFactory(),
     deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(origins=['annotation', 'interpolation', 'ballseg']),
     deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
     deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
+    deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory() if estimate_offset else None,
+    deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory() if estimate_mask else None,
     deepsport_utilities.ds.instants_dataset.views_transforms.AddIsBallTargetFactory() if estimate_presence else None,
 )
 
@@ -56,7 +62,6 @@ random_size_cropper_transform = deepsport_utilities.ds.instants_dataset.BallView
     margin=side_length//2-max_shift,
     padding=side_length,
     on_ball=True,
-    rectify=correct_distortion,
 )
 
 fixed_scale_cropper_transform = deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
@@ -66,11 +71,10 @@ fixed_scale_cropper_transform = deepsport_utilities.ds.instants_dataset.BallView
     margin=int(side_length*scale)//2-max_shift,
     padding=int(side_length*scale),
     on_ball=True,
-    rectify=correct_distortion,
 )
 
 dataset = experimentator.CachedPickledDataset(find(dataset_name))
-dataset = mlwf.FilteredDataset(dataset, lambda k: public_dataset is None or bool(isinstance(k[0], deepsport_utilities.ds.instants_dataset.InstantKey)))
+dataset = mlwf.FilteredDataset(dataset, lambda k: ballistic_dataset or bool(isinstance(k[0], deepsport_utilities.ds.instants_dataset.InstantKey)))
 dataset = mlwf.FilteredDataset(dataset, lambda k,v: estimate_presence or v.ball.origin in ['annotation', 'interpolation'] and bool(v.ball.visible))
 evaluation_dataset_name = "ballistic_ball_views.pickle"
 evaluation_dataset = experimentator.CachedPickledDataset(find(evaluation_dataset_name, verbose=True))
@@ -122,6 +126,9 @@ callbacks = [
 ]
 
 alpha = 0.5 if estimate_presence else 0
+alpha_m = 1 if estimate_mask else 0
+alpha_o = 1 if estimate_offset else 0
+alpha_d = 1
 globals().update(locals()) # required to use locals() in lambdas
 chunk_processors = [
     experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image"]),
@@ -129,11 +136,15 @@ chunk_processors = [
     models.other.GammaAugmentation("batch_input"),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
     models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False),
-    models.other.LeNetHead(output_features=2),
-    tasks.ballsize.NamedOutputs(estimate_presence=estimate_presence),
+    tasks.ballsize.BuildMaskFromLogits() if estimate_mask else None,
+    models.other.LeNetHead(output_features=4),
+    tasks.ballsize.NamedOutputs(estimate_presence=estimate_presence, estimate_offset=estimate_offset),
     models.other.BinaryCrossEntropyLoss(y_true="batch_is_ball", y_pred="predicted_is_ball", name="classification") if estimate_presence else None,
     models.other.HuberLoss(y_true='batch_ball_size', y_pred='predicted_diameter', name='regression'),
-    lambda chunk: chunk.update({"loss": (alpha*chunk["classification_loss"] + (1-alpha)*chunk["regression_loss"]) if estimate_presence else chunk["regression_loss"]}),
+    tasks.ballsize.MaskSupervision() if estimate_mask else None,
+    tasks.ballsize.OffsetSupervision() if estimate_offset else None,
+    #lambda chunk: chunk.update({"loss": (alpha*chunk["classification_loss"] + (1-alpha)*chunk["regression_loss"]) if estimate_presence else chunk["regression_loss"]}),
+    tasks.ballsize.CombineLosses({'regression_loss': alpha_d, 'offset_loss': alpha_o, 'mask_loss': alpha_m}),
     lambda chunk: chunk.update({"predicted_is_ball": tf.nn.sigmoid(chunk["predicted_is_ball"])}) if estimate_presence else None,
 ]
 

@@ -78,7 +78,7 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_input_image", "batch_input_image2", "batch_ball_height",
                           "batch_is_ball", "batch_ball_size", "batch_ball_state", "batch_ball_position"]
     batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "predicted_state", "predicted_height"
-                           "regression_loss", "classification_loss", "state_loss"]
+                           "regression_loss", "classification_loss", "state_loss", "mask_loss", "offset_loss"]
     batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state", "predicted_height"]
 
     @cached_property
@@ -100,6 +100,7 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
 
     @cached_property
     def chunk(self):
+        raise
         chunk = super().chunk
         if experiment_id := self.cfg.get("ballsize_weights"):
             folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
@@ -155,6 +156,40 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
             super().load_weights(*args, **kwargs)
 
 
+class MissingChunkProcessor(ValueError):
+    pass
+
+class AugmentedExperiment(TensorflowExperiment):
+    @cached_property
+    def chunk(self):
+        # build model
+        chunk = super().chunk
+
+        def matching_chunk_processor(chunk_processor, chunk_processors):
+            for cp in chunk_processors:
+                if hasattr(cp, 'model') and cp.model.name == chunk_processor.model.name:
+                    return cp
+            raise MissingChunkProcessor
+
+        # load weights
+        if experiment_id := self.cfg.get("starting_weights"):
+            trainable = self.cfg.get("starting_weights_trainable", {})
+            folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
+            exp = build_experiment(os.path.join(folder, "config.py"))
+            exp.load_weights(now=True)
+
+            for cp in self.chunk_processors:
+                if hasattr(cp, "model"):
+                    filename = os.path.join(folder, cp.model.name)
+                    try:
+                        if not os.path.exists(f"{filename}.index"):
+                            matching_chunk_processor(cp, exp.chunk_processors).model.save_weights(filename)
+                        cp.model.load_weights(filename)
+                        cp.model.trainable = trainable.get(cp.model.name, False)
+                        print(f"Loading {cp.model.name} weights from {filename} (trainable={cp.model.trainable})")
+                    except MissingChunkProcessor:
+                        print(f"'{cp.model.name}' chunk processor couldn't be found in {experiment_id}. Weights not loaded.")
+        return chunk
 
 @dataclass
 class StateFLYINGMetrics(Callback):
@@ -270,7 +305,7 @@ class CombineLosses(ChunkProcessor):
         self.weights = weights
         self.names = names
     def __call__(self, chunk):
-        chunk["loss"] = tf.reduce_sum([chunk[name]*w for name, w in zip(self.names, self.weights) if name in chunk])
+        chunk["loss"] = tf.reduce_sum([chunk[name]*w for name, w in zip(self.names, self.weights)])
 
 
 class BallDetection(NamedTuple): # for retro-compatibility

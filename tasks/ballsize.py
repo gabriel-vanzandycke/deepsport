@@ -25,12 +25,15 @@ class BallSizeEstimation(TensorflowExperiment):
     @cached_property
     def batch_inputs_names(self):
         batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image", "epoch", "batch_ball_position"]
-        if self.cfg.get('with_diff', None):
-            batch_inputs_names += ["batch_input_image2"]
-        if self.cfg.get('estimate_height', False):
-            batch_inputs_names += ["batch_ball_height"]
-        if self.cfg.get('estimate_mask', False):
-            batch_inputs_names += ["batch_target"]
+
+        for cfg, input_name in {
+            'with_diff':       "batch_input_image2",
+            'estimate_height': "batch_ball_height",
+            'estimate_mask':   "batch_target",
+            'estimate_offset': "batch_ball_position",
+        }.items():
+            if self.cfg.get(cfg, False):
+                batch_inputs_names.append(input_name)
         return batch_inputs_names
 
     # def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
@@ -54,7 +57,6 @@ def compute_point3D_from_diameter(calib: Calib, point2D: Point2D, pixel_size: fl
     side_c = Point2D(calib.Kinv@calib.rectify(side2D).H)
     point3D_c = Point3D(point_c.H * true_size / np.linalg.norm(point_c - side_c)) # scaling in the camera coordinates system
     point3D = calib.R.T@(point3D_c-calib.T)                              # recover real world coordinates system
-    #print("error:", calib.compute_length2D(point3D, true_size)[0] - pixel_size)
     return point3D
 
 def compute_point3D_from_height(calib: Calib, point2D: Point2D, pixel_height: float):
@@ -98,7 +100,7 @@ class ComputeDiameterError(Callback):
         self.evaluation_data = []
     def on_batch_end(self, keys, predicted_diameter, batch_ball_size, batch_ball, batch_calib, **_):
         for key, true_diameter, diameter, ball, calib in zip(keys, batch_ball_size, predicted_diameter, batch_ball, batch_calib):
-            if np.isnan(true_diameter):
+            if np.isnan(true_diameter) or ball.origin not in ['annotation', 'interpolation']:
                 continue
 
             center = ball.center
@@ -186,8 +188,17 @@ class OffsetSupervision(ChunkProcessor):
         x_pred, y_pred = chunk['predicted_xoffset'], chunk['predicted_yoffset']
         chunk["offset_loss"] = self.loss(x_true, x_pred) + self.loss(y_true, y_pred)
 
-class MaskSupervision(ChunkProcessor):
-    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
+class BuildMaskFromLogits(ChunkProcessor):
+    def __init__(self):
+        self.layers = tf.keras.Sequential([
+            tf.keras.layers.Lambda(lambda x: tf.nn.depth_to_space(x, 16)),
+            tf.keras.layers.Conv2D(filters=4, kernel_size=1),
+            tf.keras.layers.Lambda(lambda x: tf.nn.depth_to_space(x, 2))
+        ])
+    def __call__(self, chunk):
+        chunk['predicted_mask'] = self.layers(chunk['batch_logits'])
+
+class BuildMaskFromOffsetAndDiameter():
     def __call__(self, chunk):
         x, y, d = chunk['predicted_xoffset'], chunk['predicted_yoffset'], chunk['predicted_diameter']
         _, H, W = chunk['batch_target'].shape
@@ -196,8 +207,19 @@ class MaskSupervision(ChunkProcessor):
         X, Y = tf.meshgrid(x_range, y_range)
         predicted_mask = tf.where((X[tf.newaxis]-x[:,tf.newaxis,tf.newaxis])**2+(Y[tf.newaxis]-y[:,tf.newaxis,tf.newaxis])**2 < (d[:,tf.newaxis,tf.newaxis]/2)**2, 1, 0)
         chunk['predicted_mask'] = tf.cast(predicted_mask, tf.float32)
+
+class CombineLosses(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
+    def __init__(self, weights):
+        self.weights = weights
+    def __call__(self, chunk):
+        chunk['loss'] = sum([chunk[name]*weight for name, weight in self.weights.items() if weight > 0])
+
+class MaskSupervision(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
+    def __call__(self, chunk):
         mask = tf.math.logical_not(tf.math.is_nan(chunk["batch_ball_size"]))
-        loss_map = tf.keras.losses.binary_crossentropy(chunk["batch_target"][...,tf.newaxis], chunk['predicted_mask'][...,tf.newaxis], False)
+        loss_map = tf.keras.losses.binary_crossentropy(chunk["batch_target"][...,tf.newaxis], chunk['predicted_mask'], False)
         loss = tf.reduce_mean(loss_map, axis=[1,2])
         chunk['mask_loss'] = tf.reduce_mean(loss[mask])
 

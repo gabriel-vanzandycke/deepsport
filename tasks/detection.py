@@ -114,6 +114,7 @@ class ComputeDetectionMetrics(Callback):
     before = ["AuC", "GatherCycleMetrics"]
     when = ExperimentMode.EVAL
     thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
+    key: typing.Callable = lambda view_key: (view_key.instant_key, view_key.camera)
     def on_cycle_begin(self, **_):
         self.d_acc = defaultdict(list)
         self.t_acc = defaultdict(bool) # defaults to False
@@ -121,7 +122,7 @@ class ComputeDetectionMetrics(Callback):
     def on_batch_end(self, keys, batch_ball, batch_is_ball, predicted_is_ball, **_):
         for view_key, ball, target_is_ball, predicted in zip(keys, batch_ball, batch_is_ball, predicted_is_ball):
             if isinstance(view_key.instant_key, InstantKey): # Keep only views from deepsport dataset for evaluation
-                key = (view_key.instant_key, view_key.camera)
+                key = self.key(view_key)#.instant_key, view_key.camera)
                 if ball.origin == self.origin:
                     self.d_acc[key].append((ball, target_is_ball, predicted))
                     if np.any(target_is_ball):
@@ -130,27 +131,30 @@ class ComputeDetectionMetrics(Callback):
                     self.t_acc[key] = True
 
     def on_cycle_end(self, state, **_):
+        keys = set(list(self.d_acc.keys()) + list(self.t_acc.keys()))
+        state['detection_data'] = {k: (self.d_acc.get(k, []), self.t_acc.get(k, False)) for k in keys}
         for k in [None, 1, 2, 4, 8]:
             TP = np.zeros((len(self.thresholds), ))
             FP = np.zeros((len(self.thresholds), ))
             P = N = 0
             P_upper_bound = 0
-            for key, zipped in self.d_acc.items():
-                balls, target_is_ball, predicted_is_ball = zip(*zipped)
-                values = [b.value for b in balls]
-                if k is None: # Detection rate of the initial detector
-                    index = np.argmax(values)
-                    P_upper_bound += np.any(target_is_ball)
-                else: # Detection rate of the top-k strategy
-                    indices = np.argsort(values)[-k:]
-                    index = indices[np.argmax(np.array(predicted_is_ball)[indices])]
-                    values = predicted_is_ball
-                    P_upper_bound += np.any(np.array(target_is_ball)[indices])
+            for key in keys:
+                if zipped := self.d_acc[key]:
+                    balls, target_is_ball, predicted_is_ball = zip(*zipped)
+                    values = [b.value for b in balls]
+                    if k is None: # Detection rate of the initial detector
+                        index = np.argmax(values)
+                        P_upper_bound += np.any(target_is_ball)
+                    else: # Detection rate of the top-k strategy
+                        indices = np.argsort(values)[-k:]
+                        index = indices[np.argmax(np.array(predicted_is_ball)[indices])]
+                        values = predicted_is_ball
+                        P_upper_bound += np.any(np.array(target_is_ball)[indices])
 
-                output = (values[index] >= self.thresholds).astype(np.uint8)
-                target = target_is_ball[index]
-                TP +=   target   *  output
-                FP += (1-target) *  output
+                    output = (values[index] >= self.thresholds).astype(np.uint8)
+                    target = target_is_ball[index]
+                    TP +=   target   *  output
+                    FP += (1-target) *  output
 
                 has_ball = self.t_acc[key]
                 P  +=   has_ball
@@ -419,7 +423,7 @@ class DetectBalls():
                     if not calib.projects_in(ball.center):
                         continue # sanity check for detections that project behind the camera
                     ball.point = point # required to extract pseudo-annotations
-                    if self.side_length is not None:
+                    if self.side_length is not None: # BallSeg detection heatmap added to ball object
                         raise NotImplementedError("stitched image not implemented here yet")
                         batch_heatmap = np.uint8(np.clip(result['batch_heatmap'][b].numpy()*255, 0, 255))
                         x_slice = slice(x-self.side_length//2, x+self.side_length//2, None)
