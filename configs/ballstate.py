@@ -4,8 +4,8 @@ import experimentator
 from experimentator import find
 import experimentator.tf2_experiment
 import experimentator.wandb_experiment
-from deepsport_utilities.dataset import Subset, SubsetType
 import deepsport_utilities.ds.instants_dataset
+import deepsport_utilities.dataset
 from dataset_utilities.ds.raw_sequences_dataset import BallState
 import deepsport_utilities.ds.instants_dataset.dataset_splitters
 import tasks.ballstate
@@ -13,11 +13,11 @@ import tasks.classification
 import models.other
 import tasks.ballsize
 import models.tensorflow
-import numpy as np
 
-BALL3D_HEAD = 1
-BALLST_HEAD = 2
-head = BALL3D_HEAD
+nstates = 2
+wd = 1
+wp = 1
+ws = 1
 
 experiment_type = [
     experimentator.AsyncExperiment,
@@ -25,9 +25,9 @@ experiment_type = [
     experimentator.tf2_experiment.TensorflowExperiment,
     tasks.ballstate.AugmentedExperiment,
     {
-        BALL3D_HEAD: tasks.ballsize.BallSizeEstimation,
-        BALLST_HEAD: tasks.ballstate.BallStateAndBallSizeExperiment
-    }[head]
+        False: tasks.ballsize.BallSizeEstimation,
+        True: tasks.ballstate.BallStateAndBallSizeExperiment
+    }[bool(nstates)]
 ]
 
 estimate_presence = True
@@ -39,18 +39,13 @@ batch_size = 16
 
 
 # Dataset parameters
-side_length = 224
+side_length = 64
 output_shape = (side_length, side_length)
 
 # DeepSport Dataset
-dataset_name = "ballsize_dataset_256_with_detections_from_model_trained_on_full_dataset_stitched.pickle"#{
-#    (True, False): "ballsize_dataset_256_with_detections_from_model_trained_on_full_dataset_new.pickle",
-    #(True, True): "ballsize_dataset_256_with_detections_from_model_trained_on_small_dataset.pickle",
-    #(False, False): "ballsize_dataset_256_no_detections.pickle",
-#}[(estimate_presence, public_dataset)]
+dataset_name1 = "ballsize_dataset_256_with_detections_from_model_trained_on_full_dataset_stitched.pickle"
+dataset_name2 = "sds_balls_dataset.pickle"
 
-
-nstates = 0
 state_mapping = {
     0: {
         BallState.FLYING:     [1],
@@ -63,11 +58,13 @@ state_mapping = {
         BallState.DRIBBLING:  [0],
     },
     2: {
+        BallState.NONE:       [1, 0, 0],
         BallState.FLYING:     [0, 1, 0],
         BallState.CONSTRAINT: [0, 0, 1],
         BallState.DRIBBLING:  [0, 0, 1],
     },
     3: {
+        BallState.NONE:       [1, 0, 0, 0],
         BallState.FLYING:     [0, 1, 0, 0],
         BallState.CONSTRAINT: [0, 0, 1, 0],
         BallState.DRIBBLING:  [0, 0, 0, 1],
@@ -98,22 +95,32 @@ transforms = [
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory(),
-        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(state_mapping) if nstates else None,
+        deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(state_mapping),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSizeFactory(origins=['annotation', 'interpolation', 'ballseg']),
-        tasks.ballstate.AddIsBallTargetFactory(),
+        tasks.ballstate.AddBallPresenceFactory(),
     ),
 ]
 
-dataset = experimentator.CachedPickledDataset(find(dataset_name))
+if nstates == 0 or ws == 0:
+    dataset = experimentator.CachedPickledDataset(find(dataset_name1))
+else:
+    ds1 = experimentator.CachedPickledDataset(find(dataset_name1))
+    ds2 = experimentator.CachedPickledDataset(find(dataset_name2))
+    dataset = deepsport_utilities.dataset.MergedDataset(ds1, ds2)
 dataset = mlwf.TransformedDataset(dataset, transforms)
 globals().update(locals()) # required for using locals in lambda
 
 testing_arena_labels = ('KS-FR-STRASBOURG', 'KS-FR-GRAVELINES', 'KS-FR-BOURGEB', 'KS-FR-EVREUX')
-validation_arena_labels = ('KS-UK-NEWCASTLE', 'KS-US-IPSWICH', 'KS-FI-KAUHAJOKI', 'KS-FR-LEMANS', 'KS-FR-ESBVA', 'KS-FR-NANTES')
+validation_arena_labels = None#('KS-UK-NEWCASTLE', 'KS-US-IPSWICH', 'KS-FI-KAUHAJOKI', 'KS-FR-LEMANS', 'KS-FR-ESBVA', 'KS-FR-NANTES') if nstates == 0 else None
 dataset_splitter = deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingValidationArenaLabelsDatasetSplitter(testing_arena_labels, validation_arena_labels)
+dataset_splitter_type = dataset_splitter.__class__.__name__
 assert public_dataset is False
 subsets = dataset_splitter(dataset)
+
+balance_datasets = True
+if balance_datasets:
+    subsets = [deepsport_utilities.dataset.BalancedSubset(s, ['InstantKey', 'SequenceInstantKey'], lambda k: k.__class__.__name__)
+           for s in subsets]
 
 ## add ballistic dataset
 #dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
@@ -132,12 +139,12 @@ callbacks = [
     experimentator.LogStateDataCollector(),
     experimentator.LearningRateDecay(start=range(decay_start,101,decay_step), duration=2, factor=decay_factor) if not warmup else None,
     tasks.ballsize.ComputeDiameterError(),
-    experimentator.wandb_experiment.LogStateWandB(None if nstates else "validation_MAPE", True if nstates else False),
+    experimentator.wandb_experiment.LogStateWandB(),
     experimentator.LearningRateWarmUp() if warmup else None,
-    tasks.classification.ComputeClassifactionMetrics(logits_key="predicted_state", target_key="batch_ball_state", name="state_classification") if nstates else None,
-    tasks.classification.ExtractClassificationMetrics(class_name="BallState.FLYING", class_index=FLYING_index, name="state_classification") if nstates else None,
-    tasks.ballstate.StateFLYINGMetrics() if nstates else None,
-    tasks.ballstate.ComputeDetectionMetrics(origin='ballseg', key=lambda view_key: view_key.instant_key) if dataset_name != "sds_balls_dataset.pickle" and estimate_presence else None,
+    tasks.classification.ComputeClassifactionMetrics(logits_key="predicted_state", target_key="batch_ball_state", name="state_classification"),
+    tasks.classification.ExtractClassificationMetrics(class_name="BallState.FLYING", class_index=FLYING_index, name="state_classification"),
+    tasks.ballstate.StateFLYINGMetrics(),
+    tasks.ballstate.ComputeDetectionMetrics(origin='ballseg', key=lambda view_key: view_key.instant_key),
     tasks.detection.AuC("top1-AuC", "top1_metrics"),
     tasks.detection.AuC("top2-AuC", "top2_metrics"),
     tasks.detection.AuC("top4-AuC", "top4_metrics"),
@@ -146,24 +153,14 @@ callbacks = [
 ]
 
 
-#balancer = tasks.ballstate.StateOnlyBalancer if nstates > 1 else None
+balancer = tasks.ballstate.StateOnlyBalancer if nstates > 1 else None
 #ballsize_weights = "20230829_095035.167455" # trained on sizes [9;30]
 
-starting_weights = "20230905_104213.152062"
-starting_weights_trainable = {"vgg16": False, "regression_head": False, "presence_head": True}
+#starting_weights = "20230905_104213.152062"
+starting_weights_trainable = {"vgg16": True, "diameter_head": True, "presence_head": True}
 
-alpha = 0.5 if estimate_presence else 0
-
-head3d = 'single'
-head3d_list = {
-        "single": [
-            tasks.ballsize.NamedOutputs("regression_logits", estimate_presence=estimate_presence)
-        ],
-        "split": [
-            models.other.LeNetHead(name="presence", output_features=1),
-            lambda chunk: chunk.update({'predicted_diameter': chunk['regression_logits'][...,0], "predicted_is_ball": chunk['presence_logits'][...,0]})
-        ],
-    }[head3d]
+#alpha = 0.5
+#beta = 1
 
 globals().update(locals()) # required to use locals() in lambdas
 chunk_processors = [
@@ -173,16 +170,18 @@ chunk_processors = [
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"] if not with_diff else tf.concat((chunk["batch_input_image"], chunk["batch_input_diff"]), axis=3)}),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
     models.tensorflow.SixChannelsTensorflowBackbone("vgg16.VGG16", include_top=False),
-    models.other.LeNetHead(name="classification", output_features=len(state_mapping[1])) if nstates else None,
-    models.other.LeNetHead(name="regression", output_features=5),
-    *head3d_list,
-    models.other.BinaryCrossEntropyLoss(y_true="batch_is_ball", y_pred="predicted_is_ball", name="classification") if estimate_presence else None,
-    models.other.HuberLoss(y_true='batch_ball_size', y_pred='predicted_diameter', name='regression'),
-    lambda chunk: chunk.update({"predicted_state": chunk["classification_logits"]}) if nstates else None,
-    tasks.ballstate.StateClassificationLoss() if nstates else \
-        tasks.ballstate.CombineLosses(["classification_loss", "regression_loss"], weights=[alpha, 1-alpha]),
-    lambda chunk: chunk.update({"predicted_is_ball": tf.nn.sigmoid(chunk["predicted_is_ball"])}) if estimate_presence else None,
-    lambda chunk: chunk.update({"predicted_state": tf.nn.sigmoid(chunk["predicted_state"])}) if nstates else None,
+    models.other.LeNetHead(name="state", output_features=len(state_mapping[1])),
+    models.other.LeNetHead(name="diameter", output_features=1),
+    models.other.LeNetHead(name="presence", output_features=1),
+    lambda chunk: chunk.update({"predicted_diameter": chunk['diameter_logits'][...,0]}),
+    lambda chunk: chunk.update({"predicted_presence": chunk['presence_logits'][...,0]}),
+    lambda chunk: chunk.update({"predicted_state": chunk["state_logits"]}),
+    models.other.BinaryCrossEntropyLoss(y_true="batch_ball_presence", y_pred="predicted_presence", name="presence"),
+    models.other.HuberLoss(y_true='batch_ball_size', y_pred='predicted_diameter', name='diameter'),
+    tasks.ballstate.StateClassificationLoss(),
+    experimentator.tf2_chunk_processors.CombineLosses(["diameter_loss", "presence_loss", "state_loss"], weights=[wd, wp, ws]),
+    lambda chunk: chunk.update({"predicted_presence": tf.nn.sigmoid(chunk["predicted_presence"])}),
+    lambda chunk: chunk.update({"predicted_state": tf.nn.sigmoid(chunk["predicted_state"])}),
 ]
 
 learning_rate = 1e-4

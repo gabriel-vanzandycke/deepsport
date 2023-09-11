@@ -20,11 +20,11 @@ BALL_DIAMETER = 23
 
 
 class BallHeightEstimation(TensorflowExperiment):
-    batch_metrics_names = ["predicted_is_ball", "predicted_height", "height_regression_loss", "size_regression_loss", "regression_loss", "classification_loss"]
-    batch_outputs_names = ["predicted_is_ball", "predicted_height"]
+    batch_metrics_names = ["predicted_presence", "predicted_height", "height_regression_loss", "size_regression_loss", "regression_loss", "classification_loss"]
+    batch_outputs_names = ["predicted_presence", "predicted_height"]
     @cached_property
     def batch_inputs_names(self):
-        batch_inputs_names = ["batch_is_ball", "batch_ball_height", "batch_input_image", "epoch"]
+        batch_inputs_names = ["batch_ball_presence", "batch_ball_height", "batch_input_image", "epoch"]
         if self.cfg.get('with_diff', None):
             batch_inputs_names += ["batch_input_image2"]
         return batch_inputs_names
@@ -107,6 +107,6 @@ class HeightEstimationNamedOutputs(ChunkProcessor):
     def __init__(self, input_name='batch_logits'):
         self.input_name = input_name
     def __call__(self, chunk):
-        chunk["predicted_is_ball"] = chunk[self.input_name][...,0]
+        chunk["predicted_presence"] = chunk[self.input_name][...,0]
         chunk["predicted_diameter"] = chunk[self.input_name][...,1]
         chunk["predicted_height"] = chunk[self.input_name][...,2]

@@ -28,11 +28,15 @@ parser.add_argument("dataset", choices=['deepsport', 'balltracker'])
 parser.add_argument("detector", choices=['ballseg', 'pifball'], help="Detector name (sets ball 'origin' field)")
 parser.add_argument("version",  choices=['full', 'deepsport'], help="Detector version (sets file on which detection are saved")
 parser.add_argument("--workers", type=int, default=2)
-parser.add_argument("--data-augmentation", action="store_true", help="Use test-time data augmentation (useful to generate many FP to train is_ball classification on)")
+parser.add_argument("--data-augmentation", action="store_true", help="Use test-time data augmentation (useful to generate many FP to train presence classification on)")
 parser.add_argument("--loop", type=int, default=1, help="Repetitions of the items")
-parser.add_argument("--side-length", type=int, default=64, help="Side length of heatmaps")
+parser.add_argument("--side-length", type=int, default=None, help="Side length of heatmaps")
 parser.add_argument("--k", type=int, default=4, help="Maximum number of detections to consider")
+parser.add_argument("--stitched", action='store_true')
+parser.add_argument("--skip-exists", action='store_true')
 args = parser.parse_args()
+
+assert args.stitched
 
 folder = {
     "deepsport": "basketball-instants-dataset",
@@ -60,9 +64,10 @@ experiment_ids = {
 }[args.detector][args.version]
 
 filename = {
-    'full': "ball_detections.pickle",
-    'deepsport': "deepsport_ball_detections.pickle",
-}[args.version]
+    ('full', False): "ball_detections.pickle",
+    ('full', True): "full_ball_detections.pickle_stitched",
+    ('deepsport', False): "deepsport_ball_detections.pickle",
+}[args.version,args.stitched]
 
 
 
@@ -74,6 +79,8 @@ def process(ds, config):
     for arena_label, game_id in tqdm(set([(k.arena_label, k.game_id) for k in keys])):
         print("doing", arena_label, game_id, "...")
         path = os.path.join(dataset_folder, arena_label, str(game_id), filename)
+        if os.path.isfile(path) and args.skip_exists:
+            continue
         database = pickle.load(open(path, 'rb')) if os.path.isfile(path) else {}
         for instant_key in tqdm(list([k for k in keys if k.game_id == game_id]), leave=False):
             instant = ds.query_item(instant_key)

@@ -71,8 +71,8 @@ class HuberLoss(ChunkProcessor):
         self.name = name
     def __call__(self, chunk):
         mask = tf.math.logical_not(tf.math.is_nan(chunk[self.y_true]))
-        losses = self.loss(y_true=chunk[self.y_true][mask], y_pred=chunk[self.y_pred][mask])
-        chunk[f"{self.name}_loss"] = tf.reduce_mean(losses)#tf.where(tf.math.is_nan(losses), tf.zeros_like(losses), losses)
+        loss = self.loss(y_true=chunk[self.y_true][mask], y_pred=chunk[self.y_pred][mask])
+        chunk[f"{self.name}_loss"] = loss # Huber loss does reduce_mean by default
 
 class BinaryCrossEntropyLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL

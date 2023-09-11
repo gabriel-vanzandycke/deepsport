@@ -57,7 +57,7 @@ dataset = mlwf.TransformedDataset(dataset, [
         deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
         deepsport_utilities.ds.instants_dataset.views_transforms.AddBallStateFactory(),
         tasks.ballistic.AddBallSizeFactory(),
-        tasks.ballistic.AddIsBallTargetFactory(unconfident_margin=unconfident_margin),
+        tasks.ballistic.AddBallPresenceFactory(unconfident_margin=unconfident_margin),
     )
 ])
 
@@ -126,7 +126,7 @@ chunk_processors = [
     tasks.ballsize.RegressionLoss(),
     tasks.ballstate.StateClassificationLoss(classes),
     tasks.ballstate.CombineLosses(["classification_loss", "regression_loss", "state_loss"], alpha),
-    lambda chunk: chunk.update({"predicted_is_ball": tf.nn.sigmoid(chunk["predicted_is_ball"])}), # squash in [0,1]
+    lambda chunk: chunk.update({"predicted_presence": tf.nn.sigmoid(chunk["predicted_presence"])}), # squash in [0,1]
 ]
 
 learning_rate = 1e-4

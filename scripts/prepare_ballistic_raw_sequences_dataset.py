@@ -19,6 +19,7 @@ ball crops. Balls state is set to `BallState.FLYING` as the public dataset only
 contains flying balls.
 """)
 parser.add_argument("output_folder")
+parser.add_argument("--margin", type=int, default=256)
 args = parser.parse_args()
 
 dataset_folder = os.path.dirname(find("ballistic-raw-sequences/raw-basketball-sequences-dataset.json"))
@@ -28,11 +29,11 @@ dataset_config = {
     "download_flags": DownloadFlags.WITH_ALL_IMAGES | DownloadFlags.WITH_CALIB_FILE,
 }
 ids = import_dataset(InstantsDataset, find("ballistic-raw-sequences/raw-basketball-sequences-dataset.json"), **dataset_config)
-vds = ViewsDataset(ids, view_builder=BuildBallViews(margin=256, margin_in_pixels=True))
+vds = ViewsDataset(ids, view_builder=BuildBallViews(margin=args.margin, margin_in_pixels=True))
 
 def set_flying_state(view_key, view):
     view.ball.state = BallState.FLYING
     return view
 
 vds = TransformedDataset(vds, [AddBallAnnotation(), set_flying_state])
-PickledDataset.create(vds, os.path.join(args.output_folder, "ballistic_ball_views.pickle"), yield_keys_wrapper=tqdm)
+PickledDataset.create(vds, os.path.join(args.output_folder, f"ballistic_ball_views_{args.margin}.pickle"), yield_keys_wrapper=tqdm)

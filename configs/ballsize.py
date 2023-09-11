@@ -52,7 +52,7 @@ data_extractor_transform = deepsport_utilities.transforms.DataExtractorTransform
     deepsport_utilities.ds.instants_dataset.views_transforms.AddCalibFactory(),
     deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPositionFactory() if estimate_offset else None,
     deepsport_utilities.ds.instants_dataset.views_transforms.AddBallSegmentationTargetViewFactory() if estimate_mask else None,
-    deepsport_utilities.ds.instants_dataset.views_transforms.AddIsBallTargetFactory() if estimate_presence else None,
+    deepsport_utilities.ds.instants_dataset.views_transforms.AddBallPresenceFactory() if estimate_presence else None,
 )
 
 random_size_cropper_transform = deepsport_utilities.ds.instants_dataset.BallViewRandomCropperTransform(
@@ -139,13 +139,13 @@ chunk_processors = [
     tasks.ballsize.BuildMaskFromLogits() if estimate_mask else None,
     models.other.LeNetHead(output_features=4),
     tasks.ballsize.NamedOutputs(estimate_presence=estimate_presence, estimate_offset=estimate_offset),
-    models.other.BinaryCrossEntropyLoss(y_true="batch_is_ball", y_pred="predicted_is_ball", name="classification") if estimate_presence else None,
+    models.other.BinaryCrossEntropyLoss(y_true="batch_ball_presence", y_pred="predicted_presence", name="classification") if estimate_presence else None,
     models.other.HuberLoss(y_true='batch_ball_size', y_pred='predicted_diameter', name='regression'),
     tasks.ballsize.MaskSupervision() if estimate_mask else None,
     tasks.ballsize.OffsetSupervision() if estimate_offset else None,
     #lambda chunk: chunk.update({"loss": (alpha*chunk["classification_loss"] + (1-alpha)*chunk["regression_loss"]) if estimate_presence else chunk["regression_loss"]}),
     tasks.ballsize.CombineLosses({'regression_loss': alpha_d, 'offset_loss': alpha_o, 'mask_loss': alpha_m}),
-    lambda chunk: chunk.update({"predicted_is_ball": tf.nn.sigmoid(chunk["predicted_is_ball"])}) if estimate_presence else None,
+    lambda chunk: chunk.update({"predicted_presence": tf.nn.sigmoid(chunk["predicted_presence"])}) if estimate_presence else None,
 ]
 
 learning_rate = 1e-4

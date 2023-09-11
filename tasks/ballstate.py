@@ -64,7 +64,7 @@ class BallStateClassification(TensorflowExperiment):
     def balancer(self):
         return self.cfg['balancer'](self.cfg)
 
-    def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
+    def batch_generator_bkp(self, subset: Subset, *args, batch_size=None, **kwargs):
         if subset.name == "ballistic":
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
@@ -75,17 +75,17 @@ class BallStateClassification(TensorflowExperiment):
 
 
 class BallStateAndBallSizeExperiment(TensorflowExperiment):
-    batch_inputs_names = ["batch_input_image", "batch_input_image2", "batch_ball_height",
-                          "batch_is_ball", "batch_ball_size", "batch_ball_state", "batch_ball_position"]
-    batch_metrics_names = ["predicted_is_ball", "predicted_diameter", "predicted_state", "predicted_height"
-                           "regression_loss", "classification_loss", "state_loss", "mask_loss", "offset_loss"]
-    batch_outputs_names = ["predicted_is_ball", "predicted_diameter", "predicted_state", "predicted_height"]
+    batch_inputs_names = ["batch_input_image", "batch_input_image2",
+                          "batch_ball_presence", "batch_ball_size", "batch_ball_state", "batch_ball_position"]
+    batch_metrics_names = ["predicted_presence", "predicted_diameter", "predicted_state",
+                           "diameter_loss", "presence_loss", "state_loss"]
+    batch_outputs_names = ["predicted_presence", "predicted_diameter", "predicted_state"]
 
     @cached_property
     def balancer(self):
         return self.cfg['balancer'](self.cfg) if self.cfg['balancer'] else None
 
-    def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
+    def batch_generator_bkp(self, subset: Subset, *args, batch_size=None, **kwargs):
         if subset.type == SubsetType.EVAL or self.balancer is None:
             yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
         else:
@@ -97,63 +97,6 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
     def train(self, *args, **kwargs):
         self.cfg['testing_arena_labels'] = self.cfg['dataset_splitter'].testing_arena_labels
         return super().train(*args, **kwargs)
-
-    @cached_property
-    def chunk(self):
-        raise
-        chunk = super().chunk
-        if experiment_id := self.cfg.get("ballsize_weights"):
-            folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
-            exp = None
-
-            for name, condition in [
-                ("backbone",        lambda cp: hasattr(cp, "model")),
-                ("regression_head", lambda cp: hasattr(cp, "model") and cp.model.name == 'regression_head'),
-            ]:
-                filename = os.path.join(folder, name)
-                if not os.path.exists(f"{filename}.index"):
-                    exp = exp or build_experiment(os.path.join(folder, "config.py"))
-                    exp.load_weights(now=True)
-                    for cp in exp.chunk_processors:
-                        if condition(cp):
-                            cp.model.save_weights(filename)
-                            break
-                for cp in self.chunk_processors:
-                    if condition(cp):
-                        print(f"Loading {name} weights from {filename}")
-                        cp.model.load_weights(filename)
-                        if self.cfg.get('freeze_ballsize', False):
-                            cp.model.trainable = False
-                        break
-        elif self.cfg.get('freeze_ballsize', False) is True:
-            raise ValueError("Cannot freeze ballsize weights if no experiment_id is provided")
-
-        return chunk
-
-    def save_weights(self, *args, **kwargs):
-        folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", self.cfg['experiment_id'])
-        if self.cfg['nstates']:
-            for cp in self.chunk_processors:
-                if hasattr(cp, "model") and cp.model.name == 'classification_head':
-                    filename = os.path.join(folder, "classification_head")
-                    cp.model.save_weights(filename)
-                    break
-        else:
-            super().save_weights(*args, **kwargs)
-
-    def load_weights(self, *args, **kwargs):
-        experiment_id = self.cfg.get('experiment_id', os.path.basename(os.path.dirname(self.cfg["filename"])))
-        folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
-        print(self.cfg['nstates'])
-        #super().load_weights(*args, **kwargs)
-        if self.cfg['nstates']:
-            for cp in self.chunk_processors:
-                if hasattr(cp, "model") and cp.model.name == 'classification_head':
-                    filename = os.path.join(folder, "classification_head")
-                    cp.model.load_weights(filename)
-                    break
-        else:
-            super().load_weights(*args, **kwargs)
 
 
 class MissingChunkProcessor(ValueError):
@@ -214,7 +157,7 @@ class AddSingleBallStateFactory(Transform):
         return {"ball_state": [1] if predicate(view.ball) else [0]}
 
 
-class AddIsBallTargetFactory(Transform):
+class AddBallPresenceFactory(Transform):
     def __init__(self, unconfident_margin=.1, proximity_threshold=10):
         self.unconfident_margin = unconfident_margin
         self.proximity_threshold = proximity_threshold
@@ -222,23 +165,23 @@ class AddIsBallTargetFactory(Transform):
         ball_origin = view.ball.origin
         trusted_origins = ['annotation', 'interpolation']
         if ball_origin in trusted_origins:
-            return {"is_ball": 1}
+            return {'ball_presence': 1}
         if 'random' == ball_origin:
-            return {"is_ball": 0}
+            return {'ball_presence': 0}
 
         annotated_balls = [a for a in view.annotations if isinstance(a, Ball) and a.origin in trusted_origins]
         annotated_ball = annotated_balls[0] if len(annotated_balls) == 1 else None
         if annotated_ball:
             projected = lambda ball: view.calib.project_3D_to_2D(ball.center)
             if np.linalg.norm(projected(view.ball) - projected(annotated_ball)) < self.proximity_threshold:
-                return {"is_ball": 1}
+                return {'ball_presence': 1}
             else:
-                return {"is_ball": 0}
+                return {'ball_presence': 0}
 
         elif 'pseudo-annotation' in ball_origin:
-            return {"is_ball": 1 - self.unconfident_margin}
+            return {'ball_presence': 1 - self.unconfident_margin}
         else:
-            return {'is_ball': 0 + self.unconfident_margin}
+            return {'ball_presence': 0 + self.unconfident_margin}
 
 
 
@@ -296,16 +239,7 @@ class StateClassificationLoss(ChunkProcessor):
         loss = tf.keras.losses.binary_crossentropy(chunk["batch_ball_state"], chunk["predicted_state"], from_logits=True)
         if len(loss.shape) > 1: # if BallState.NONE class is used, avoid computing loss for it
             loss = loss[:,1:]
-        chunk["loss"] = chunk["state_loss"] = tf.reduce_mean(loss)
-
-
-class CombineLosses(ChunkProcessor):
-    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
-    def __init__(self, names, weights):
-        self.weights = weights
-        self.names = names
-    def __call__(self, chunk):
-        chunk["loss"] = tf.reduce_sum([chunk[name]*w for name, w in zip(self.names, self.weights)])
+        chunk["state_loss"] = tf.reduce_mean(loss)
 
 
 class BallDetection(NamedTuple): # for retro-compatibility

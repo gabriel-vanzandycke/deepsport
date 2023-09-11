@@ -20,11 +20,11 @@ BALL_DIAMETER = 23
 
 
 class BallSizeEstimation(TensorflowExperiment):
-    batch_metrics_names = ["predicted_is_ball", "predicted_height", "predicted_diameter", "regression_loss", "classification_loss", "mask_loss", "offset_loss"]
-    batch_outputs_names = ["predicted_diameter", "predicted_is_ball", "predicted_height", "predicted_mask"]
+    batch_metrics_names = ["predicted_presence", "predicted_height", "predicted_diameter", "regression_loss", "classification_loss", "mask_loss", "offset_loss"]
+    batch_outputs_names = ["predicted_diameter", "predicted_presence", "predicted_height", "predicted_mask"]
     @cached_property
     def batch_inputs_names(self):
-        batch_inputs_names = ["batch_is_ball", "batch_ball_size", "batch_input_image", "epoch", "batch_ball_position"]
+        batch_inputs_names = ["batch_ball_presence", "batch_ball_size", "batch_input_image", "epoch", "batch_ball_position"]
 
         for cfg, input_name in {
             'with_diff':       "batch_input_image2",
@@ -148,15 +148,15 @@ class ComputeDetectionMetrics(Callback):
     thresholds: typing.Tuple[int, np.ndarray, list, tuple] = np.linspace(0,1,51)
     def on_cycle_begin(self, **_):
         self.acc = {"TP": 0, "FP": 0, "TN": 0, "FN": 0, "P": 0, "N": 0}
-    def on_batch_end(self, batch_is_ball, predicted_is_ball, batch_ball, batch_has_ball=None, **_):
+    def on_batch_end(self, batch_ball_presence, predicted_presence, batch_ball, batch_has_ball=None, **_):
         balls, inverse = np.unique(np.array(batch_ball), axis=0, return_inverse=True)
         for index, _ in enumerate(balls):
             indices = np.where(inverse==index)[0]
 
             # keep index with the largest confidence
-            i = indices[np.argmax(predicted_is_ball[indices])]
-            output = (predicted_is_ball[i] > self.thresholds).astype(np.uint8)
-            target = batch_is_ball[i]
+            i = indices[np.argmax(predicted_presence[indices])]
+            output = (predicted_presence[i] > self.thresholds).astype(np.uint8)
+            target = batch_ball_presence[i]
             self.acc['TP'] +=   target   *   output
             self.acc['FP'] += (1-target) *   output
             self.acc['FN'] +=   target   * (1-output)
@@ -240,7 +240,7 @@ class NamedOutputs(ChunkProcessor):
         chunk["predicted_diameter"] = chunk[self.input_name][...,i]
         if self.estimate_presence:
             i += 1
-            chunk["predicted_is_ball"] = chunk[self.input_name][...,i]
+            chunk["predicted_presence"] = chunk[self.input_name][...,i]
         if self.estimate_height:
             i += 1
             chunk["predicted_height"] = chunk[self.input_name][...,i]
@@ -255,7 +255,7 @@ class IsBallClassificationLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __call__(self, chunk):
         # TODO: check if binary crossentropy fits the unconfident targets
-        chunk["classification_loss"] = tf.keras.losses.binary_crossentropy(y_true=chunk["batch_is_ball"], y_pred=chunk["predicted_is_ball"], from_logits=True)
+        chunk["classification_loss"] = tf.keras.losses.binary_crossentropy(y_true=chunk["batch_ball_presence"], y_pred=chunk["predicted_presence"], from_logits=True)
 
 class ClassificationLoss(IsBallClassificationLoss):
     pass # retrocompatibility

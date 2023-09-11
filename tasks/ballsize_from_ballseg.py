@@ -21,9 +21,9 @@ from .ballsize import BALL_DIAMETER, compute_projection_error, compute_relative_
 class BallSizeFromBallSegExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_target", "batch_input_image", "batch_ball_size"]
     batch_metrics_names = ["batch_heatmap", "batch_input_image", "topk_indices",
-        "target_is_ball", "predicted_is_ball", "batch_ball_size", "predicted_diameter",
+        "target_presence", "predicted_presence", "batch_ball_size", "predicted_diameter",
         "ballseg_topk_TP", "ballseg_topk_FP", "ballseg_P", "ballseg_N"]
-    batch_outputs_names = ["predicted_diameter", "predicted_is_ball"]
+    batch_outputs_names = ["predicted_diameter", "predicted_presence"]
     def save_weights(self, filename):
         self.train_model.get_layer('ballsize').save_weights(filename)
     def load_weights(self, *args, **kwargs):

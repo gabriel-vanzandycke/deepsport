@@ -119,13 +119,13 @@ class ComputeDetectionMetrics(Callback):
         self.d_acc = defaultdict(list)
         self.t_acc = defaultdict(bool) # defaults to False
 
-    def on_batch_end(self, keys, batch_ball, batch_is_ball, predicted_is_ball, **_):
-        for view_key, ball, target_is_ball, predicted in zip(keys, batch_ball, batch_is_ball, predicted_is_ball):
+    def on_batch_end(self, keys, batch_ball, batch_ball_presence, predicted_presence, **_):
+        for view_key, ball, target_presence, predicted in zip(keys, batch_ball, batch_ball_presence, predicted_presence):
             if isinstance(view_key.instant_key, InstantKey): # Keep only views from deepsport dataset for evaluation
                 key = self.key(view_key)#.instant_key, view_key.camera)
                 if ball.origin == self.origin:
-                    self.d_acc[key].append((ball, target_is_ball, predicted))
-                    if np.any(target_is_ball):
+                    self.d_acc[key].append((ball, target_presence, predicted))
+                    if np.any(target_presence):
                         self.t_acc[key] = True # balls might be visible on an image despite having been annotated on another.
                 elif ball.origin == 'annotation':
                     self.t_acc[key] = True
@@ -140,19 +140,19 @@ class ComputeDetectionMetrics(Callback):
             P_upper_bound = 0
             for key in keys:
                 if zipped := self.d_acc[key]:
-                    balls, target_is_ball, predicted_is_ball = zip(*zipped)
+                    balls, target_presence, predicted_presence = zip(*zipped)
                     values = [b.value for b in balls]
                     if k is None: # Detection rate of the initial detector
                         index = np.argmax(values)
-                        P_upper_bound += np.any(target_is_ball)
+                        P_upper_bound += np.any(target_presence)
                     else: # Detection rate of the top-k strategy
                         indices = np.argsort(values)[-k:]
-                        index = indices[np.argmax(np.array(predicted_is_ball)[indices])]
-                        values = predicted_is_ball
-                        P_upper_bound += np.any(np.array(target_is_ball)[indices])
+                        index = indices[np.argmax(np.array(predicted_presence)[indices])]
+                        values = predicted_presence
+                        P_upper_bound += np.any(np.array(target_presence)[indices])
 
                     output = (values[index] >= self.thresholds).astype(np.uint8)
-                    target = target_is_ball[index]
+                    target = target_presence[index]
                     TP +=   target   *  output
                     FP += (1-target) *  output
 
@@ -175,7 +175,6 @@ class ComputeDetectionMetrics(Callback):
 
             name = 'initial_top1_metrics' if k is None else f'top{k}_metrics'
             state[name] = pandas.DataFrame(np.vstack([data[name] for name in data]).T, columns=list(data.keys()))
-
 
 
 
