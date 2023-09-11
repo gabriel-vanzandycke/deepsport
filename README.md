@@ -24,7 +24,7 @@ Setup your environment by copying `.env.template` to `.env` and set the followin
 
 # Datasets
 
-The different tasks rely on datasets to train and evaluate models. To download them programatically, you need the kaggle CLI:
+The different tasks rely on datasets to train and evaluate models. To download them programmatically, you need the kaggle CLI:
 
 ```bash
 pip install kaggle
