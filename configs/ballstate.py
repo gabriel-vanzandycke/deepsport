@@ -14,7 +14,7 @@ import models.other
 import tasks.ballsize
 import models.tensorflow
 
-nstates = 2
+nstates = 3
 wd = 1
 wp = 1
 ws = 1
@@ -23,7 +23,7 @@ experiment_type = [
     experimentator.AsyncExperiment,
     experimentator.CallbackedExperiment,
     experimentator.tf2_experiment.TensorflowExperiment,
-    tasks.ballstate.AugmentedExperiment,
+    experimentator.tf2_experiment.AugmentedExperiment,
     {
         False: tasks.ballsize.BallSizeEstimation,
         True: tasks.ballstate.BallStateAndBallSizeExperiment
@@ -32,7 +32,6 @@ experiment_type = [
 
 estimate_presence = True
 with_diff = True
-public_dataset = False
 
 globals().update(locals()) # required to use 'BallState' in list comprehention
 batch_size = 16
@@ -43,8 +42,8 @@ side_length = 64
 output_shape = (side_length, side_length)
 
 # DeepSport Dataset
-dataset_name1 = "ballsize_dataset_256_with_detections_from_model_trained_on_full_dataset_stitched.pickle"
-dataset_name2 = "sds_balls_dataset.pickle"
+ids_name = "ballsize_dataset_256_with_detections_from_model_trained_on_full_dataset_stitched.pickle"
+sds_name = "sds_balls_dataset.pickle"
 
 state_mapping = {
     0: {
@@ -101,26 +100,24 @@ transforms = [
     ),
 ]
 
-if nstates == 0 or ws == 0:
-    dataset = experimentator.CachedPickledDataset(find(dataset_name1))
-else:
-    ds1 = experimentator.CachedPickledDataset(find(dataset_name1))
-    ds2 = experimentator.CachedPickledDataset(find(dataset_name2))
-    dataset = deepsport_utilities.dataset.MergedDataset(ds1, ds2)
-dataset = mlwf.TransformedDataset(dataset, transforms)
 globals().update(locals()) # required for using locals in lambda
+dataset = {
+    (0, 0, 1): lambda : experimentator.CachedPickledDataset(find(sds_name)),
+    (0, 1, 0): lambda : experimentator.CachedPickledDataset(find(ids_name)),
+    (1, 0, 0): lambda : experimentator.CachedPickledDataset(find("ballsize_dataset_256_no_detections.pickle")),
+    (1, 1, 0): lambda : experimentator.CachedPickledDataset(find(ids_name)),
+    (1, 1, 1): lambda : deepsport_utilities.dataset.MergedDataset(*[experimentator.CachedPickledDataset(find(name)) for name in [ids_name, sds_name]]),
+}[(wd, wp, ws)]() # call the lambda
+dataset = mlwf.TransformedDataset(dataset, transforms)
 
-testing_arena_labels = ('KS-FR-STRASBOURG', 'KS-FR-GRAVELINES', 'KS-FR-BOURGEB', 'KS-FR-EVREUX')
-validation_arena_labels = None#('KS-UK-NEWCASTLE', 'KS-US-IPSWICH', 'KS-FI-KAUHAJOKI', 'KS-FR-LEMANS', 'KS-FR-ESBVA', 'KS-FR-NANTES') if nstates == 0 else None
+testing_arena_labels = ('KS-FR-STRASBOURG', 'KS-FR-GRAVELINES', 'KS-FR-BOURGEB')
+validation_arena_labels = ('KS-UK-NEWCASTLE', 'KS-US-IPSWICH', 'KS-FI-KAUHAJOKI', 'KS-FR-LEMANS', 'KS-FR-ESBVA', 'KS-FR-NANTES', 'KS-FR-EVREUX')
 dataset_splitter = deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingValidationArenaLabelsDatasetSplitter(testing_arena_labels, validation_arena_labels)
 dataset_splitter_type = dataset_splitter.__class__.__name__
-assert public_dataset is False
 subsets = dataset_splitter(dataset)
 
-balance_datasets = True
-if balance_datasets:
-    subsets = [deepsport_utilities.dataset.BalancedSubset(s, ['InstantKey', 'SequenceInstantKey'], lambda k: k.__class__.__name__)
-           for s in subsets]
+if ws and (wp or wd):
+    subsets[0] = deepsport_utilities.dataset.BalancedSubset(subsets[0], ['InstantKey', 'SequenceInstantKey'], lambda k: k.__class__.__name__)
 
 ## add ballistic dataset
 #dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
@@ -152,15 +149,17 @@ callbacks = [
     tasks.detection.AuC("initial_top1-AuC", "initial_top1_metrics"),
 ]
 
-
-balancer = tasks.ballstate.StateOnlyBalancer if nstates > 1 else None
-#ballsize_weights = "20230829_095035.167455" # trained on sizes [9;30]
-
+starting_weights = None
 #starting_weights = "20230905_104213.152062"
-starting_weights_trainable = {"vgg16": True, "diameter_head": True, "presence_head": True}
+#starting_weights = "20230912_224558.363401" # trained with kendall lr=1e-4, best validation MAPE
+#starting_weights = "20230913_050521.095945" # trained with kendall lr=1e-5, best validation top4-AuC
+starting_weights_trainable = {"vgg16": False, "diameter_head": wd != 0, "presence_head": wp != 0, "state_head": ws != 0}
 
-#alpha = 0.5
-#beta = 1
+kendall = True
+combine_losses = {
+    True:  experimentator.tf2_chunk_processors.AlexKendallCombineLosses,
+    False: experimentator.tf2_chunk_processors.CombineLosses,
+}[kendall](["diameter_loss", "presence_loss", "state_loss"], weights=[wd, wp, ws])
 
 globals().update(locals()) # required to use locals() in lambdas
 chunk_processors = [
@@ -179,7 +178,7 @@ chunk_processors = [
     models.other.BinaryCrossEntropyLoss(y_true="batch_ball_presence", y_pred="predicted_presence", name="presence"),
     models.other.HuberLoss(y_true='batch_ball_size', y_pred='predicted_diameter', name='diameter'),
     tasks.ballstate.StateClassificationLoss(),
-    experimentator.tf2_chunk_processors.CombineLosses(["diameter_loss", "presence_loss", "state_loss"], weights=[wd, wp, ws]),
+    combine_losses,
     lambda chunk: chunk.update({"predicted_presence": tf.nn.sigmoid(chunk["predicted_presence"])}),
     lambda chunk: chunk.update({"predicted_state": tf.nn.sigmoid(chunk["predicted_state"])}),
 ]

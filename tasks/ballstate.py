@@ -11,8 +11,8 @@ import pandas
 import sklearn.metrics
 import tensorflow as tf
 
-from experimentator import ExperimentMode, ChunkProcessor, Subset, Callback, build_experiment
-from experimentator.tf2_experiment import TensorflowExperiment
+from experimentator import ExperimentMode, ChunkProcessor, Subset, Callback
+from experimentator.tf2_experiment import TensorflowExperiment, AugmentedExperiment # pylint: ignore=unused-import
 from dataset_utilities.ds.raw_sequences_dataset import BallState
 from deepsport_utilities.ds.instants_dataset import BallState, BallViewRandomCropperTransform, Ball, ViewKey, View, InstantKey
 
@@ -23,116 +23,14 @@ from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantKey
 from tasks.detection import divide, ComputeDetectionMetrics as _ComputeDetectionMetrics
 from tasks.classification import ComputeClassifactionMetrics as _ComputeClassifactionMetrics, ComputeConfusionMatrix as _ComputeConfusionMatrix
 
-class StateOnlyBalancer():
-    def __init__(self, cfg):
-        #self.classes = list(cfg['state_mapping'].keys()) # makes a copy
-        self.classes = list(range(len(cfg['state_mapping'][1]))) # Tout ceci est dégeuh. à cleaner dès que je sais quel nstate choisir
-        try:
-            self.classes.remove(BallState.NONE)
-        except ValueError:
-            pass
-        #print(self.classes)
-        #raise
-        self.get_class = lambda k,v: np.where(v['ball_state'])[0][0] # returns the index in state_mapping that is 1
-        self.dataset_name = cfg['dataset_name']
-
-    @cached_property
-    def cache(self):
-        return {}
-
-class BallStateClassification(TensorflowExperiment):
-    batch_inputs_names = ["batch_ball_state", "batch_input_image", "batch_input_image2"]
-    batch_metrics_names = ["batch_output", "batch_target"]
-    batch_outputs_names = ["batch_output"]
-
-    @staticmethod
-    def balanced_keys_generator(keys, balancer, query_item):
-        pending = defaultdict(list)
-        for key in keys:
-            try:
-                c = balancer.cache.get(key) or balancer.cache.setdefault(key, balancer.get_class(key, query_item(key)))
-            except KeyError:
-                continue
-            except TypeError: # if query_item(key) is None (i.e. impossible to satisfy crop) a TypeError will be raised.
-                continue
-            pending[c].append(key)
-            if all([len(pending[c]) > 0 for c in balancer.classes]):
-                for c in balancer.classes:
-                    yield pending[c].pop(0)
-
-    @cached_property
-    def balancer(self):
-        return self.cfg['balancer'](self.cfg)
-
-    def batch_generator_bkp(self, subset: Subset, *args, batch_size=None, **kwargs):
-        if subset.name == "ballistic":
-            yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
-        else:
-            batch_size = batch_size or self.batch_size
-            keys = self.balanced_keys_generator(subset.shuffled_keys(), self.balancer, subset.dataset.query_item)
-            # yields pairs of (keys, data)
-            yield from subset.batches(keys=keys, batch_size=batch_size, *args, **kwargs)
-
 
 class BallStateAndBallSizeExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_input_image", "batch_input_image2",
                           "batch_ball_presence", "batch_ball_size", "batch_ball_state", "batch_ball_position"]
     batch_metrics_names = ["predicted_presence", "predicted_diameter", "predicted_state",
-                           "diameter_loss", "presence_loss", "state_loss"]
+                           "diameter_loss", "presence_loss", "state_loss", "state_loss_vec"]
     batch_outputs_names = ["predicted_presence", "predicted_diameter", "predicted_state"]
 
-    @cached_property
-    def balancer(self):
-        return self.cfg['balancer'](self.cfg) if self.cfg['balancer'] else None
-
-    def batch_generator_bkp(self, subset: Subset, *args, batch_size=None, **kwargs):
-        if subset.type == SubsetType.EVAL or self.balancer is None:
-            yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
-        else:
-            batch_size = batch_size or self.batch_size
-            keys_gen = BallStateClassification.balanced_keys_generator(subset.shuffled_keys(), self.balancer, subset.query_item)
-            # yields pairs of (keys, data)
-            yield from subset.batches(keys=keys_gen, batch_size=batch_size, *args, **kwargs)
-
-    def train(self, *args, **kwargs):
-        self.cfg['testing_arena_labels'] = self.cfg['dataset_splitter'].testing_arena_labels
-        return super().train(*args, **kwargs)
-
-
-class MissingChunkProcessor(ValueError):
-    pass
-
-class AugmentedExperiment(TensorflowExperiment):
-    @cached_property
-    def chunk(self):
-        # build model
-        chunk = super().chunk
-
-        def matching_chunk_processor(chunk_processor, chunk_processors):
-            for cp in chunk_processors:
-                if hasattr(cp, 'model') and cp.model.name == chunk_processor.model.name:
-                    return cp
-            raise MissingChunkProcessor
-
-        # load weights
-        if experiment_id := self.cfg.get("starting_weights"):
-            trainable = self.cfg.get("starting_weights_trainable", {})
-            folder = os.path.join(os.environ['RESULTS_FOLDER'], "ballstate", experiment_id)
-            exp = build_experiment(os.path.join(folder, "config.py"))
-            exp.load_weights(now=True)
-
-            for cp in self.chunk_processors:
-                if hasattr(cp, "model"):
-                    filename = os.path.join(folder, cp.model.name)
-                    try:
-                        if not os.path.exists(f"{filename}.index"):
-                            matching_chunk_processor(cp, exp.chunk_processors).model.save_weights(filename)
-                        cp.model.load_weights(filename)
-                        cp.model.trainable = trainable.get(cp.model.name, False)
-                        print(f"Loading {cp.model.name} weights from {filename} (trainable={cp.model.trainable})")
-                    except MissingChunkProcessor:
-                        print(f"'{cp.model.name}' chunk processor couldn't be found in {experiment_id}. Weights not loaded.")
-        return chunk
 
 @dataclass
 class StateFLYINGMetrics(Callback):
@@ -151,13 +49,9 @@ class StateFLYINGMetrics(Callback):
         state[f"{str(BallState.FLYING)}_auc"] = sklearn.metrics.auc(R, P)
 
 
-class AddSingleBallStateFactory(Transform):
-    def __call__(self, view_key, view):
-        predicate = lambda ball: view.calib.projects_in(ball.center) and ball.visible is not False and ball.state == BallState.FLYING
-        return {"ball_state": [1] if predicate(view.ball) else [0]}
-
-
 class AddBallPresenceFactory(Transform):
+    """ supports untrusted origins
+    """
     def __init__(self, unconfident_margin=.1, proximity_threshold=10):
         self.unconfident_margin = unconfident_margin
         self.proximity_threshold = proximity_threshold
@@ -199,10 +93,6 @@ class BallViewRandomCropperTransformCompat():
             return self.size_cropper_transform(view_key, view)
 
 
-class TwoTasksBalancer:
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError("retro-compatibility")
-
 class ComputeClassifactionMetrics(_ComputeClassifactionMetrics):
     def on_batch_end(self, predicted_state, batch_ball_state, **_):
         B, C = predicted_state.shape
@@ -236,10 +126,11 @@ class TopkNormalizedGain(Callback):
 class StateClassificationLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __call__(self, chunk):
-        loss = tf.keras.losses.binary_crossentropy(chunk["batch_ball_state"], chunk["predicted_state"], from_logits=True)
-        if len(loss.shape) > 1: # if BallState.NONE class is used, avoid computing loss for it
-            loss = loss[:,1:]
-        chunk["state_loss"] = tf.reduce_mean(loss)
+        losses = tf.keras.losses.binary_crossentropy(chunk["batch_ball_state"], chunk["predicted_state"], from_logits=True)
+        if len(losses.shape) > 1: # if BallState.NONE class is used, avoid computing loss for it
+            losses = losses[:,1:]
+        mask = tf.math.logical_not(tf.math.is_nan(losses))
+        chunk["state_loss"] = tf.reduce_mean(losses[mask])
 
 
 class BallDetection(NamedTuple): # for retro-compatibility
