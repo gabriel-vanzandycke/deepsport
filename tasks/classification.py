@@ -30,12 +30,15 @@ class ComputeClassifactionMetrics(Callback):
     def on_batch_end(self, **state):
         output = state[self.logits_key] == np.max(state[self.logits_key], axis=1)[..., np.newaxis]
         target = state[self.target_key] # must be one hot encoded
+        mask = ~np.any(np.isnan(target), axis=-1)
+        output = output[mask]
+        target = target[mask]
         assert target.shape == output.shape, f"target shape {target.shape} != output shape {output.shape}"
 
-        self.acc['TP'] += np.sum(  target   *   output  , axis=0) # sum over batch dimension
-        self.acc['FP'] += np.sum((1-target) *   output  , axis=0)
-        self.acc['FN'] += np.sum(  target   * (1-output), axis=0)
-        self.acc['TN'] += np.sum((1-target) * (1-output), axis=0)
+        self.acc['TP'] += np.sum(  target   *   output  , axis=0).astype(np.float64) # sum over batch dimension
+        self.acc['FP'] += np.sum((1-target) *   output  , axis=0).astype(np.float64)
+        self.acc['FN'] += np.sum(  target   * (1-output), axis=0).astype(np.float64)
+        self.acc['TN'] += np.sum((1-target) * (1-output), axis=0).astype(np.float64)
     def on_cycle_end(self, state, **_):
         FP = self.acc["FP"]
         TP = self.acc["TP"]

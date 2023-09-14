@@ -28,7 +28,7 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_input_image", "batch_input_image2",
                           "batch_ball_presence", "batch_ball_size", "batch_ball_state", "batch_ball_position"]
     batch_metrics_names = ["predicted_presence", "predicted_diameter", "predicted_state",
-                           "diameter_loss", "presence_loss", "state_loss", "state_loss_vec"]
+                           "diameter_loss", "presence_loss", "state_loss", 'state_loss_vec', 'state_logits', 'batch_logits', 'losses', 'mask', 'y_true']
     batch_outputs_names = ["predicted_presence", "predicted_diameter", "predicted_state"]
 
 
@@ -36,14 +36,20 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
 class StateFLYINGMetrics(Callback):
     before = ["GatherCycleMetrics"]
     when = ExperimentMode.EVAL
+    class_index: int
     def on_cycle_begin(self, **_):
         self.acc = {'true': [], 'pred': []}
     def on_batch_end(self, **state):
         _, C = state['predicted_state'].shape
         for predicted_state, target_state in zip(state['predicted_state'], state['batch_ball_state']):
-            self.acc['pred'].append(float(predicted_state[1] if C > 1 else predicted_state[0]))
-            self.acc['true'].append(float(target_state[1] if C > 1 else target_state[0]))
+            if np.any(np.isnan(target_state)):
+                continue
+            assert not np.any(np.isnan(predicted_state)), predicted_state
+            self.acc['pred'].append(float(predicted_state[self.class_index]))
+            self.acc['true'].append(float(target_state[self.class_index]))
     def on_cycle_end(self, state, **_):
+        if not self.acc['true']:
+            return
         P, R, T = sklearn.metrics.precision_recall_curve(self.acc['true'], self.acc['pred'])
         state[f"{str(BallState.FLYING)}_prc"] = pandas.DataFrame(np.vstack([P[:-1], R[:-1], T]).T, columns=['precision', 'recall', 'thresholds'])
         state[f"{str(BallState.FLYING)}_auc"] = sklearn.metrics.auc(R, P)
@@ -125,14 +131,19 @@ class TopkNormalizedGain(Callback):
 
 class StateClassificationLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
-    def __call__(self, chunk):
-        call = {
+    def __init__(self, nstates):
+        self.loss_function = {
             True:  tf.keras.losses.CategoricalCrossentropy,
             False: tf.keras.losses.BinaryCrossentropy,
-        }[chunk["batch_ball_state"].shape[1] > 1](from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
-        losses = call(y_true=chunk["batch_ball_state"], y_pred=chunk["predicted_state"])
-        chunk['state_loss_vec'] = losses
-        mask = tf.math.logical_not(tf.math.is_nan(losses))
+        }[nstates > 1](from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
+        self.nstates = nstates
+    def __call__(self, chunk):
+        mask = tf.math.logical_not(tf.math.is_nan(chunk["batch_ball_state"]))
+        losses = self.loss_function(
+            y_true=tf.where(mask, chunk["batch_ball_state"], 0),
+            y_pred=chunk["predicted_state"]
+        )
+        mask = tf.reduce_all(mask, axis=-1)
         chunk["state_loss"] = tf.reduce_mean(losses[mask])
 
 

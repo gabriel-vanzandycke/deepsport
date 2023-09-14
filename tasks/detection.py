@@ -10,7 +10,7 @@ import pandas
 import tensorflow as tf
 
 from calib3d import Point2D, Point3D
-from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics, GaussianBlur
+from tf_layers import AvoidLocalEqualities, PeakLocalMax, ComputeElementaryMetrics#, GaussianBlur
 
 from deepsport_utilities.transforms import Transform
 from deepsport_utilities.ds.instants_dataset import Ball, BallState, InstantKey
