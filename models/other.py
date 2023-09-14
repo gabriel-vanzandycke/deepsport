@@ -3,7 +3,32 @@ from functools import cached_property
 import tensorflow as tf
 
 from experimentator import ChunkProcessor, ExperimentMode
-from tf_layers import GammaColorAugmentation
+from tf_layers import GammaColorAugmentation, AlexKendalMultiTaskLossWeighting
+
+
+class CombineLosses(ChunkProcessor):
+    mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
+    def __init__(self, names, weights):
+        self.weights = weights
+        self.names = names
+    def __call__(self, chunk):
+        losses = tf.stack([chunk[name]*w for name, w in zip(self.names, self.weights)])
+        mask = tf.math.logical_not(tf.math.is_nan(losses))
+        chunk["losses"] = losses
+        chunk["loss"] = tf.reduce_sum(losses[mask])
+
+class AlexKendallCombineLosses(CombineLosses):
+    def __call__(self, chunk):
+        super().__call__(chunk)
+        losses = chunk['losses']
+        mask = tf.math.logical_and(
+            tf.math.logical_not(tf.math.is_nan(losses)),
+            tf.cast(losses, tf.bool)
+        )
+        layer = AlexKendalMultiTaskLossWeighting()
+        losses = layer(losses)
+        chunk['losses'] = losses
+        chunk["loss"] = tf.reduce_sum(losses[mask])
 
 
 class GammaAugmentation(ChunkProcessor):
