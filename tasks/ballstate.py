@@ -126,9 +126,12 @@ class TopkNormalizedGain(Callback):
 class StateClassificationLoss(ChunkProcessor):
     mode = ExperimentMode.TRAIN | ExperimentMode.EVAL
     def __call__(self, chunk):
-        losses = tf.keras.losses.binary_crossentropy(chunk["batch_ball_state"], chunk["predicted_state"], from_logits=True)
-        if len(losses.shape) > 1: # if BallState.NONE class is used, avoid computing loss for it
-            losses = losses[:,1:]
+        call = {
+            True:  tf.keras.losses.CategoricalCrossentropy,
+            False: tf.keras.losses.BinaryCrossentropy,
+        }[chunk["batch_ball_state"].shape[1] > 1](from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
+        losses = call(y_true=chunk["batch_ball_state"], y_pred=chunk["predicted_state"])
+        chunk['state_loss_vec'] = losses
         mask = tf.math.logical_not(tf.math.is_nan(losses))
         chunk["state_loss"] = tf.reduce_mean(losses[mask])
 

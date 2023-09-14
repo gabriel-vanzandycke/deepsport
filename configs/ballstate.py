@@ -46,27 +46,20 @@ ids_name = "ballsize_dataset_256_with_detections_from_model_trained_on_full_data
 sds_name = "sds_balls_dataset.pickle"
 
 state_mapping = {
-    0: {
-        BallState.FLYING:     [1],
-        BallState.CONSTRAINT: [0],
-        BallState.DRIBBLING:  [0],
-    },
     1: {
         BallState.FLYING:     [1],
         BallState.CONSTRAINT: [0],
         BallState.DRIBBLING:  [0],
     },
     2: {
-        BallState.NONE:       [1, 0, 0],
-        BallState.FLYING:     [0, 1, 0],
-        BallState.CONSTRAINT: [0, 0, 1],
-        BallState.DRIBBLING:  [0, 0, 1],
+        BallState.FLYING:     [1, 0],
+        BallState.CONSTRAINT: [0, 1],
+        BallState.DRIBBLING:  [0, 1],
     },
     3: {
-        BallState.NONE:       [1, 0, 0, 0],
-        BallState.FLYING:     [0, 1, 0, 0],
-        BallState.CONSTRAINT: [0, 0, 1, 0],
-        BallState.DRIBBLING:  [0, 0, 0, 1],
+        BallState.FLYING:     [1, 0, 0],
+        BallState.CONSTRAINT: [0, 1, 0],
+        BallState.DRIBBLING:  [0, 0, 1],
     }
 }[nstates]
 FLYING_index = 1 if nstates > 1 else 0
