@@ -28,7 +28,7 @@ class BallStateAndBallSizeExperiment(TensorflowExperiment):
     batch_inputs_names = ["batch_input_image", "batch_input_image2",
                           "batch_ball_presence", "batch_ball_size", "batch_ball_state", "batch_ball_position"]
     batch_metrics_names = ["predicted_presence", "predicted_diameter", "predicted_state",
-                           "diameter_loss", "presence_loss", "state_loss", 'state_loss_vec', 'state_logits', 'batch_logits', 'losses', 'mask', 'y_true']
+                           "diameter_loss", "presence_loss", "state_loss", "losses"]
     batch_outputs_names = ["predicted_presence", "predicted_diameter", "predicted_state"]
 
 
