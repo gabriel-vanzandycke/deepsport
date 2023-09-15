@@ -18,6 +18,9 @@ class CombineLosses(ChunkProcessor):
         chunk["loss"] = tf.reduce_sum(losses[mask])
 
 class AlexKendallCombineLosses(CombineLosses):
+    @cached_property
+    def layer(self):
+        return AlexKendalMultiTaskLossWeighting()
     def __call__(self, chunk):
         super().__call__(chunk)
         losses = chunk['losses']
@@ -25,9 +28,8 @@ class AlexKendallCombineLosses(CombineLosses):
             tf.math.logical_not(tf.math.is_nan(losses)),
             tf.cast(losses, tf.bool)
         )
-        layer = AlexKendalMultiTaskLossWeighting()
-        losses = layer(losses)
-        chunk['losses'] = losses
+        losses = tf.where(mask, losses, 0)
+        losses = self.layer(losses)
         chunk["loss"] = tf.reduce_sum(losses[mask])
 
 
