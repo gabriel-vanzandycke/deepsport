@@ -30,7 +30,6 @@ experiment_type = [
     }[bool(nstates)]
 ]
 
-estimate_presence = True
 with_diff = True
 
 globals().update(locals()) # required to use 'BallState' in list comprehention
@@ -95,12 +94,12 @@ transforms = [
 
 globals().update(locals()) # required for using locals in lambda
 dataset = {
-    (0, 0, 1): lambda : experimentator.CachedPickledDataset(find(sds_name)),
-    (0, 1, 0): lambda : experimentator.CachedPickledDataset(find(ids_name)),
-    (1, 0, 0): lambda : experimentator.CachedPickledDataset(find("ballsize_dataset_256_no_detections.pickle")),
-    (1, 1, 0): lambda : experimentator.CachedPickledDataset(find(ids_name)),
-    (1, 1, 1): lambda : deepsport_utilities.dataset.MergedDataset(*[experimentator.CachedPickledDataset(find(name)) for name in [ids_name, sds_name]]),
-}[(wd, wp, ws)]() # call the lambda
+    (False, False, True ): lambda : experimentator.CachedPickledDataset(find(sds_name)),
+    (False, True , False): lambda : experimentator.CachedPickledDataset(find(ids_name)),
+    (True , False, False): lambda : experimentator.CachedPickledDataset(find("ballsize_dataset_256_no_detections.pickle")),
+    (True , True , False): lambda : experimentator.CachedPickledDataset(find(ids_name)),
+    (True , True , True ): lambda : deepsport_utilities.dataset.MergedDataset(*[experimentator.CachedPickledDataset(find(name)) for name in [ids_name, sds_name]]),
+}[(wd>0, wp>0, ws>0)]() # call the lambda
 dataset = mlwf.TransformedDataset(dataset, transforms)
 
 testing_arena_labels = ('KS-FR-STRASBOURG', 'KS-FR-GRAVELINES', 'KS-FR-BOURGEB')
@@ -143,6 +142,7 @@ callbacks = [
 ]
 
 starting_weights = None
+#starting_weights = "20230914_164056.176720" # manual weighting: 1, 1, 1
 #starting_weights = "20230905_104213.152062"
 #starting_weights = "20230912_224558.363401" # trained with kendall lr=1e-4, best validation MAPE
 #starting_weights = "20230913_050521.095945" # trained with kendall lr=1e-5, best validation top4-AuC
