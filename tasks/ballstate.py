@@ -146,6 +146,17 @@ class StateClassificationLoss(ChunkProcessor):
         mask = tf.reduce_all(mask, axis=-1)
         chunk["state_loss"] = tf.reduce_mean(losses[mask])
 
+class OutputPredictedStateChunkProcessor(ChunkProcessor):
+    mode = ExperimentMode.INFER
+    def __init__(self, nstates):
+        self.pred_function = {
+            True:  lambda x: tf.argmax(x, axis=1) + 1,
+            False: lambda x: tf.nn.sigmoid(x) > 0.5
+        }[nstates > 1]
+        self.nstates = nstates
+    def __call__(self, chunk):
+        chunk["predicted_state"] = self.pred_function(chunk["predicted_state"])
+
 
 class BallDetection(NamedTuple): # for retro-compatibility
     model: str

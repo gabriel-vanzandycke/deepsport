@@ -115,7 +115,7 @@ if ws and (wp or wd):
 #dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
 #subsets.append(Subset("ballistic", SubsetType.EVAL, dataset))
 
-decay_start = 20
+decay_start = 10
 decay_step = 10
 decay_factor = .5
 warmup = False
@@ -173,7 +173,7 @@ chunk_processors = [
     tasks.ballstate.StateClassificationLoss(nstates=nstates),
     combine_losses,
     lambda chunk: chunk.update({"predicted_presence": tf.nn.sigmoid(chunk["predicted_presence"])}),
-    lambda chunk: chunk.update({"predicted_state": tf.nn.sigmoid(chunk["predicted_state"])}),
+    tasks.ballstate.OutputPredictedStateChunkProcessor(nstates=nstates)
 ]
 
 learning_rate = 1e-4
