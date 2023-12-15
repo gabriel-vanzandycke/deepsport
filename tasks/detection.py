@@ -532,21 +532,14 @@ class ImportDetectionsTransform(Transform):
         else:
             detections = self.database[key].get(instant_key.timestamp, [])
 
+        # Export annotated position to detections
+        if instant.ball and self.transfer_true_position:
+            self.set_true_position(instant.calibs, detections, instant.ball)
         # Compute pseudo-annotation from detections
-        annotations = [a for a in instant.annotations if isinstance(a, Ball)]
-        instant.ball = None
-        if annotations:
-            assert len(annotations) == 1
-            instant.ball = annotations[0]
-            if self.transfer_true_position:
-                self.set_true_position(instant.calibs, detections, instant.ball)
-        elif self.estimate_pseudo_annotation and len(detections) > 1:
+        if not instant.ball and self.estimate_pseudo_annotation and len(detections) > 1:
             pseudo_annotation = self.extract_pseudo_annotation(detections, getattr(instant, "ball_state", BallState.NONE))
             if pseudo_annotation is not None:
-                instant.annotations.extend([pseudo_annotation])
-                annotations = [pseudo_annotation]
-                instant.ball = pseudo_annotation
-        instant.annotations = annotations
+                instant.annotations = [pseudo_annotation]
 
         # Remove true positives
         if self.remove_true_positives and instant.ball:
