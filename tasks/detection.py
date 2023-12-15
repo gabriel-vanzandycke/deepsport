@@ -535,6 +535,7 @@ class ImportDetectionsTransform(Transform):
         # Export annotated position to detections
         if instant.ball and self.transfer_true_position:
             self.set_true_position(instant.calibs, detections, instant.ball)
+
         # Compute pseudo-annotation from detections
         if not instant.ball and self.estimate_pseudo_annotation and len(detections) > 1:
             pseudo_annotation = self.extract_pseudo_annotation(detections, getattr(instant, "ball_state", BallState.NONE))
