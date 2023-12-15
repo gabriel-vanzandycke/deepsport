@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from deepsport_utilities.court import BALL_DIAMETER
-from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState
+from deepsport_utilities.ds.instants_dataset import InstantsDataset, BallState, Ball
 from tasks.ballsize import compute_projection_error
 
 np.set_printoptions(precision=3, linewidth=110)#, suppress=True)
@@ -24,16 +24,16 @@ class SampleBasedEvaluation:
         for sample in gen:
             if sample.ball is not None:
                 if hasattr(sample, 'model'):
-                    if sample.ball_state == BallState.FLYING \
+                    if sample.true_state == BallState.FLYING \
                      and sample.model.window.duration >= self.min_duration:
                         self.TP += 1
-                    elif sample.ball_state != BallState.NONE \
+                    elif sample.true_state != BallState.NONE \
                      and sample.model.window.duration >= self.min_duration:
                         self.FP += 1
                 else:
-                    if sample.ball_state == BallState.FLYING:
+                    if sample.true_state == BallState.FLYING:
                         self.FN += 1
-                    elif sample.ball_state != BallState.NONE:
+                    elif sample.true_state != BallState.NONE:
                         self.TN += 1
                 true_balls = [a for a in sample.ball_annotations if a.origin in ['interpolation', 'annotation']]
                 if true_balls:
@@ -43,14 +43,14 @@ class SampleBasedEvaluation:
                         error = compute_projection_error(true_center, sample.model(sample.timestamp))[0]
                     else:
                         error = detection_error
-                    if sample.ball_state == BallState.FLYING:
+                    if sample.true_state == BallState.FLYING:
                         self.ballistic_restricted_MAPE.append(error)
                     self.ballistic_MAPE.append(error)
                     self.detections_MAPE.append(detection_error)
             yield sample
     @property
     def metrics(self):
-        mean = lambda x: np.mean(x) if x else np.nan
+        mean = lambda x: np.mean(np.abs(x)) if x else np.nan
         return {
             "TP": self.TP,
             "FP": self.FP,
@@ -63,7 +63,7 @@ class SampleBasedEvaluation:
         }
 
 
-class Trajectory:
+class TrajectorySamples:
     def __init__(self, samples, trajectory_id):
         self.start_key = samples[0].key
         self.end_key = samples[-1].key
@@ -149,13 +149,13 @@ class TrajectoryBasedEvaluation:
         trajectory_id = 1
         trajectory_samples = []
         for sample in gen:
-            if sample.ball_state == BallState.FLYING:
+            if sample.true_state == BallState.FLYING:
                 self.annotations.append(trajectory_id)
                 trajectory_samples.append(sample)
             else:
                 self.annotations.append(0)
                 if trajectory_samples:
-                    yield Trajectory(trajectory_samples, trajectory_id)
+                    yield TrajectorySamples(trajectory_samples, trajectory_id)
                     trajectory_id += 1
                 trajectory_samples = []
 
@@ -167,7 +167,7 @@ class TrajectoryBasedEvaluation:
             new_model = getattr(sample, 'model', None)
             if new_model != model:
                 if model:
-                    yield Trajectory(trajectory_samples, trajectory_id)
+                    yield TrajectorySamples(trajectory_samples, trajectory_id)
                     trajectory_id += 1
                     trajectory_samples = []
                 model = new_model
@@ -257,19 +257,23 @@ class InstantRenderer():
         self.ids = ids
         self.font_size = .8
 
-    def draw_ball(self, pd, image, ball, color=None, label=None, cross=True):
+    def draw_ball(self, pd, image, ball, color=None, label=None, projection=True, cross=True, **kwargs):
+        if isinstance(ball, Ball):
+            ball = ball.center
         color = color or pd.color
-        ground3D = Point3D(ball.center.x, ball.center.y, 0)
-        pd.draw_line(image, ball.center,               ground3D,                  lineType=cv2.LINE_AA, color=color)
-        if cross:
-            pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), lineType=cv2.LINE_AA, thickness=1, color=color)
-            pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), lineType=cv2.LINE_AA, thickness=1, color=color)
-        radius = pd.calib.compute_length2D(ball.center, BALL_DIAMETER/2)
-        x, y = pd.calib.project_3D_to_2D(ball.center).to_int_tuple()
+        if projection:
+            ground3D = Point3D(ball.x, ball.y, 0)
+            pd.draw_line(image, ball,               ground3D,                  **kwargs, color=color)
+            if cross:
+                pd.draw_line(image, ground3D+Point3D(100,0,0), ground3D-Point3D(100,0,0), **kwargs, thickness=1, color=color)
+                pd.draw_line(image, ground3D+Point3D(0,100,0), ground3D-Point3D(0,100,0), **kwargs, thickness=1, color=color)
+        radius = pd.calib.compute_length2D(ball, BALL_DIAMETER/2)
+        x, y = pd.calib.project_3D_to_2D(ball).to_int_tuple()
 
-        cv2.circle(image, (x, y), int(radius), color, 1)
+        if isinstance(image, np.ndarray):
+            cv2.circle(image, (x, y), int(radius), color, 1)
         if label is not None:
-            cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, color, 2, lineType=cv2.LINE_AA)
+            cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, color, 2, **kwargs)
 
     def draw_model(self, pd, image, model, color, label, offset=0):
         start_timestamp = model.window[0].timestamp
@@ -288,7 +292,7 @@ class InstantRenderer():
         radii = pd.calib.compute_length2D(points3D, BALL_DIAMETER/2)
         for i, (point3D, point2D, radius) in enumerate(zip(points3D, points2D, radii)):
             pd.draw_line(image, point3D, model.window[i].ball.center, (255, 255, 255), 1)
-            self.draw_ball(pd, image, model.window[i].ball, (255,255,255), cross=False)
+            self.draw_ball(pd, image, model.window[i].ball, (255,255,255), cross=False, lineType=cv2.LINE_AA)
             radius = 2
             cv2.circle(image, pd.calib.project_3D_to_2D(model.window[i].ball.center).to_int_tuple(), int(radius), (200, 200, 200), -1)
             cv2.circle(image, point2D.to_int_tuple(), int(radius), color, -1)
@@ -320,7 +324,7 @@ class InstantRenderer():
 
                 if model:
                     self.draw_model(pd, image, model, color=(250, 195, 0), label="")
-                color = (150, 150, 150) if hasattr(sample, 'model') else ((225, 130, 0) if sample.ball_state == BallState.FLYING else (0, 120, 255))
+                color = (150, 150, 150) if hasattr(sample, 'model') else ((225, 130, 0) if sample.true_state == BallState.FLYING else (0, 120, 255))
                 label = f"{ball.value:0.2f} - {str(ball.state)}" if ball.value else f"{str(ball.state)}"
                 self.draw_ball(pd, image, ball, color=color, label=label)
 
@@ -330,12 +334,12 @@ class InstantRenderer():
                 ball = sample.ball_annotations[0]
                 if ball.origin in ['annotation', 'interpolation']:
                     self.draw_ball(pd, image, ball, color=color)
-            cv2.putText(image, str(sample.ball_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, color, 2, lineType=cv2.LINE_AA)
+            cv2.putText(image, str(sample.true_state), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, self.font_size, color, 2, lineType=cv2.LINE_AA)
 
         return np.hstack(instant.images)
 
 class TrajectoryRenderer(InstantRenderer):
-    def __call__(self, annotated: Trajectory, predicted: Trajectory):
+    def __call__(self, annotated: TrajectorySamples, predicted: TrajectorySamples):
         annotated_trajectory_samples = {sample.key: sample for sample in annotated.samples} if annotated else {}
         predicted_trajectory_samples = {sample.key: sample for sample in predicted.samples} if predicted else {}
         samples = {**annotated_trajectory_samples, **predicted_trajectory_samples} # prioritize predicted trajectory samples
