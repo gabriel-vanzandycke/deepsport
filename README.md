@@ -11,7 +11,7 @@ Clone and install the repository with
 ```bash
 git clone https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
-conda create --name deepsport python=3.8   # optional
+conda create --name deepsport python=3.8 ; conda activate deepsport   # optional
 pip install -e .
 ```
 
