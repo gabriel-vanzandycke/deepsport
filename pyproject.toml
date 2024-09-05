@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deepsport"
+version = "1.6.0"
+authors = [
+    {name = "Gabriel Van Zandycke", email = "gabriel.vanzandycke@hotmail.com"},
+]
+description = "Experimentation framework for computer vision"
+requires-python = "~=3.10"
+dependencies = [
+    "mlworkflow>=0.6.0",
+    "dill>=0.3.6",
+    "numpy>=1.22",
+    "calib3d>=2.10.0",
+    "pandas>=1.4.2",
+    "tensorflow>=2.11",
+    "python-dotenv>=0.21",
+    "scikit-learn>=1.2",
+    "jupyter>=1.0",
+    "tf_layers @ git+https://github.com/gabriel-vanzandycke/tf_layers@main",
+    "icnet_tf2 @ git+https://github.com/gabriel-vanzandycke/icnet_tf2@master",
+    "experimentator",
+    "deepsport-utilities",
+    "dataset-utilities",
+]
+readme = "README.md"
+license = {file = "LICENSE.md"}
+urls.Homepage = "https://github.com/gabriel-vanzandycke/deepsport"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.uv]
+package = false # this repo is not a package (and does not follow the src/ file structure)
+
+[tool.uv.sources]
+experimentator = { path = "libs/experimentator", editable = true }
+deepsport-utilities = { path = "libs/deepsport_utilities", editable = true }
+dataset-utilities = { path = "libs/dataset_utilities", editable = true }
+
+[tool.ruff.lint]
+ignore = ["E731", "E741"]
+unfixable = []
