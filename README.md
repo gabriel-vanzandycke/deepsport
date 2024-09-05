@@ -12,8 +12,9 @@ Clone and install the repository with
 ```bash
 git clone https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
-conda create --name deepsport python=3.8   # optional
-pip install -e .
+git submodule update --init --recursive
+pip install uv
+uv sync --extra dev
 ```
 
 Setup your environment by copying `.env.template` to `.env` and set the following variables:
@@ -22,6 +23,7 @@ Setup your environment by copying `.env.template` to `.env` and set the followin
 - `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
 
 **Note:** Environment variable like `${HOME}` must be enclosed in curly brackets.
+
 
 # Datasets
 
@@ -67,7 +69,12 @@ The tasks are determined by a configuration file (located in the `configs` folde
 
 The models can be trained by running the following command from the project root folder (or by adding the project root folder to the `DATA_PATH` environment variable):
 ```bash
-python -m experimentator configs/<config-file> --epochs <numper-of-epochs>
+uv run python -m experimentator configs/<config-file> --epochs <numper-of-epochs>
+```
+
+For interactive execution, you can launch Jupyter notebooks with:
+```bash
+uv run jupyter
 ```
 
 Note: Configuration parameters can be overwritten from the command line by adding `--kwargs "<param-name>=<param-value>"`
@@ -95,7 +102,7 @@ This tasks addresses ball detection using a keypoint detection approach greatly 
 
 **Important note:** The computation required for the evaluation phase is extremely long when the model is untrained. For this reasons, evaluation phase should be skipped for the first few epochs:
 ```bash
-python -m experimentator configs/pifball.py --epochs 101 --kwargs "eval_epochs=range(20,101,20)"
+uv run python -m experimentator configs/pifball.py --epochs 101 --kwargs "eval_epochs=range(20,101,20)"
 ```
 
 ## BallSize: ball diameter estimation for 3D localization

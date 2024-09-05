@@ -13,3 +13,5 @@ wandb
 .vscode
 *.mp4
 *.db
+*.pytest_cache
+*.venv

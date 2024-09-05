@@ -1,0 +1,9 @@
+[submodule "libs/experimentator"]
+	path = libs/experimentator
+	url = git@github.com:gabriel-vanzandycke/experimentator.git
+[submodule "libs/dataset_utilities"]
+	path = libs/dataset_utilities
+	url = git@gitlab.com:deepsport/dataset_utilities.git
+[submodule "libs/deepsport_utilities"]
+	path = libs/deepsport_utilities
+	url = git@gitlab.com:deepsport/deepsport_utilities.git
