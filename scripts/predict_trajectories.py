@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 import wandb
 
 from experimentator import find
-from mlworkflow import PickledDataset, TransformedDataset
+from mlworkflow import PickledDataset
 
 from tasks.ballistic import TrajectoryBasedEvaluation, SampleBasedEvaluation#, PickDetection#SelectBall,
 from models.ballistic import TrajectoryDetector, AnnotatedTrajectoryJumper, FilterBallStateSolution, InliersFiltersSolution, PositionAndDiameterFitter2D, FilterInliers, PositionFitter2D, FirstPositionNullSpeedSolution

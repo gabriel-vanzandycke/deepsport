@@ -12,7 +12,7 @@ import sklearn.metrics
 import tensorflow as tf
 
 from experimentator import ExperimentMode, ChunkProcessor, Subset, Callback
-from experimentator.tf2_experiment import TensorflowExperiment, AugmentedExperiment # pylint: ignore=unused-import
+from experimentator.tf2_experiment import TensorflowExperiment, AugmentedExperiment # noqa: F401
 from dataset_utilities.ds.raw_sequences_dataset import BallState
 from deepsport_utilities.ds.instants_dataset import BallState, BallViewRandomCropperTransform, Ball, ViewKey, View, InstantKey
 

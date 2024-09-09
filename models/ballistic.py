@@ -1,5 +1,5 @@
-from dataset_utilities.ds.raw_sequences_dataset.ballistic_trajectories import Fit3D, Fit2D, ParabolaModel, \
-    BallisticModel, ParabolaFirstAndLastFitter, Parabola2DLinearFitter, Parabola3DLinearFitter, ParabolaFitter, BallisticFitter
+from dataset_utilities.ds.raw_sequences_dataset.ballistic_trajectories import ParabolaModel, \
+    Parabola2DLinearFitter, Parabola3DLinearFitter
 # kept for retro-compatibility
 
 from dataclasses import dataclass, field, make_dataclass

@@ -1,20 +1,14 @@
 from collections import defaultdict
-from dataclasses import dataclass
 from functools import cached_property
-import typing
 
 import numpy as np
 import pandas
-import tensorflow as tf
 
 from calib3d import Calib, Point3D, Point2D
 from experimentator.tf2_chunk_processors import ChunkProcessor
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator import Callback, ExperimentMode
-from deepsport_utilities.transforms import Transform
-from deepsport_utilities.ds.instants_dataset import ViewKey, View
 
-from .detection import divide
 
 BALL_DIAMETER = 23
 

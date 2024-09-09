@@ -12,7 +12,7 @@ import tensorflow as tf
 from calib3d import Point3D, Point2D
 from experimentator import ChunkProcessor, ExperimentMode
 # allow import from here to simplify config file
-from experimentator.tf2_chunk_processors import CastFloat, Normalize, DatasetStandardize, StopGradients # pylint: disable=unused-import
+from experimentator.tf2_chunk_processors import CastFloat, Normalize, DatasetStandardize, StopGradients # noqa: F401
 
 from deepsport_utilities.transforms import Transform
 from deepsport_utilities.court import BALL_DIAMETER

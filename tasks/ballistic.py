@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import warnings
 
 from calib3d import Point3D, ProjectiveDrawer
 import cv2
