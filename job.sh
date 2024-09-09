@@ -5,7 +5,6 @@
 #SBATCH --mem=40G
 #SBATCH --gres="gpu:1"
 #SBATCH --partition=gpu
-#SBATCH --exclude=mb-mil102,mb-rom101,mb-rom102,mb-rom103
 
 #workers=`echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l`
 workers=0
@@ -25,5 +24,9 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+which conda
+
+$HOME/miniconda3/bin/conda activate deepsport
 
 python -m experimentator ${REMAINING_ARGS[@]} --kwargs "jobid=${SLURM_JOB_ID}" --workers $workers
