@@ -4,11 +4,14 @@ import mlworkflow as mlwf
 import experimentator
 from experimentator import find
 import experimentator.tf2_experiment
-import deepsport_utilities.ds.scoreboards_dataset
+import dataset_utilities.ds.scoreboards_dataset
+import deepsport_utilities.ds.instants_dataset
+import deepsport_utilities.transforms
 import models.other
 import models.tensorflow
 import experimentator.wandb_experiment
 import tasks.scoreboards
+import models.icnet
 
 experiment_type = [
     experimentator.AsyncExperiment,
@@ -20,25 +23,21 @@ experiment_type = [
 batch_size = 16
 
 # Dataset parameters
-output_shape = (512, 256)
+output_shape = (512, 512)
 dataset_name = "scoreboards_dataset.pickle"
 
-scale = 1
-size_min = 0.8
-size_max = 1.2
-max_shift = 50
-
+scale = .5
 transforms = [
-    deepsport_utilities.ds.scoreboards_dataset.RandomScalingCropperTransform(output_shape, size_min, size_max, max_shift),
+    dataset_utilities.ds.scoreboards_dataset.RandomScalingCropperTransform(output_shape, scale=scale),
     deepsport_utilities.transforms.DataExtractorTransform(
-        deepsport_utilities.ds.scoreboards_dataset.AddImageFactory(),
-        deepsport_utilities.ds.scoreboards_dataset.AddNumbersHeatmapFactory()
+        dataset_utilities.ds.scoreboards_dataset.AddImageFactory(),
+        dataset_utilities.ds.scoreboards_dataset.AddNumbersHeatmapFactory()
     ),
 ]
 
 dataset = mlwf.PickledDataset(find(dataset_name))
 dataset = mlwf.TransformedDataset(dataset, transforms)
-subsets = deepsport_utilities.dataset.BasicDatasetSplitter()(dataset)
+subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter()(dataset)
 
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
@@ -50,12 +49,17 @@ callbacks = [
     #experimentator.wandb_experiment.LogStateWandB(),
 ]
 
+globals().update(locals()) # required to use locals() in lambdas
+
 chunk_processors = [
-    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image"]),
+    experimentator.tf2_chunk_processors.CastFloat(tensor_names=["batch_input_image", "batch_target"]),
     lambda chunk: chunk.update({"batch_input": chunk["batch_input_image"]}),
     models.other.GammaAugmentation("batch_input"),
     experimentator.tf2_chunk_processors.Normalize(tensor_names=["batch_input"]),
-    models.tensorflow.TensorflowBackbone("vgg16.VGG16", include_top=False),
+    models.icnet.ICNetBackbone(),
+    models.icnet.ICNetHead(num_classes=1),
+    experimentator.tf2_chunk_processors.SigmoidCrossEntropyLoss(),
+    lambda chunk: chunk.update({"batch_heatmap": tf.nn.sigmoid(chunk["batch_logits"])}),
 ]
 
 learning_rate = 1e-4
