@@ -35,6 +35,11 @@ dev = [
     "pytest>=8.3",
 ]
 
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib", # required to resolve imported python modules of git submodules
+]
+
 [tool.uv]
 package = false # this repo is not a package (and does not follow the src/ file structure)
 
