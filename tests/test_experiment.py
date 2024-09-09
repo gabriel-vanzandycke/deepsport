@@ -1,6 +1,6 @@
 import pytest
 
-from experimentator import build_experiment, find
+from experimentator import build_experiment
 
 
 @pytest.mark.skip(reason="Dummy")
