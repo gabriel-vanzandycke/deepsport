@@ -252,7 +252,7 @@ class ComputeKeypointsDetectionHitmap(ChunkProcessor):
         self.threshold = threshold
         self.fast = fast
 
-        self.avoid_local_eq = AvoidLocalEqualities() if fast else GaussianBlur(30, 7)
+        self.avoid_local_eq = AvoidLocalEqualities() if fast else GaussianBlur(30, 7)  # noqa: F821 (to be imported)
         self.peak_local_max = PeakLocalMax(min_distance=non_max_suppression_pool_size//2, thresholds=thresholds)
 
     def __call__(self, chunk):
@@ -390,7 +390,7 @@ class DetectBalls():
         for cp in self.exp.chunk_processors:
             if isinstance(cp, ComputeKeypointsDetectionHitmap):
                 print("Found ComputeKeypointsDetectionHitmap")
-                cp.avoid_local_eq = GaussianBlur(30, 7)
+                cp.avoid_local_eq = GaussianBlur(30, 7) # noqa: F821 (to be imported)
                 break
 
         self.detection_threshold = threshold
