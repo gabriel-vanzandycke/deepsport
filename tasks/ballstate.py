@@ -1,26 +1,19 @@
-from collections import defaultdict
 from dataclasses import dataclass
-from functools import cached_property
-import os
 from typing import NamedTuple
-import typing
 
 import numpy as np
-from calib3d import Point2D, Point3D
+from calib3d import Point2D
 import pandas
 import sklearn.metrics
 import tensorflow as tf
 
-from experimentator import ExperimentMode, ChunkProcessor, Subset, Callback
+from experimentator import ExperimentMode, ChunkProcessor, Callback
 from experimentator.tf2_experiment import TensorflowExperiment, AugmentedExperiment # noqa: F401
 from dataset_utilities.ds.raw_sequences_dataset import BallState
-from deepsport_utilities.ds.instants_dataset import BallState, BallViewRandomCropperTransform, Ball, ViewKey, View, InstantKey
+from deepsport_utilities.ds.instants_dataset import BallState, BallViewRandomCropperTransform, Ball, ViewKey, View
 
-from deepsport_utilities.dataset import Subset, SubsetType, find
-from deepsport_utilities.court import BALL_DIAMETER
 from deepsport_utilities.transforms import Transform
-from dataset_utilities.ds.raw_sequences_dataset import SequenceInstantKey
-from tasks.detection import divide, ComputeDetectionMetrics as _ComputeDetectionMetrics
+from tasks.detection import ComputeDetectionMetrics as _ComputeDetectionMetrics
 from tasks.classification import ComputeClassifactionMetrics as _ComputeClassifactionMetrics, ComputeConfusionMatrix as _ComputeConfusionMatrix
 
 
