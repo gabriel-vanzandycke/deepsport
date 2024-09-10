@@ -25,15 +25,12 @@ dependencies = [
     "experimentator",
     "deepsport-utilities",
     "dataset-utilities",
+    "deepsport",
 ]
 readme = "README.md"
 license = {file = "LICENSE.md"}
 urls.Homepage = "https://github.com/gabriel-vanzandycke/deepsport"
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.3",
-]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -42,11 +39,16 @@ addopts = [
 
 [tool.uv]
 package = false # this repo is not a package (and does not follow the src/ file structure)
+dev-dependencies = ["pytest>=8.3"]
+
+[tool.uv.workspace]
+members = ["libs/*"]
 
 [tool.uv.sources]
-experimentator = { path = "libs/experimentator", editable = true }
-deepsport-utilities = { path = "libs/deepsport_utilities", editable = true }
-dataset-utilities = { path = "libs/dataset_utilities", editable = true }
+experimentator = { workspace = true }
+deepsport-utilities = { workspace = true }
+dataset-utilities = { workspace = true }
+deepsport = { workspace = true }
 
 [tool.ruff.lint]
 ignore = ["E731", "E741"]
