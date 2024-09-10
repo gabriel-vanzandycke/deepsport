@@ -1,17 +1,35 @@
-__pycache__
+# Distribution / packaging
+*.egg-info/
+build/
+dist/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Unit test / coverage reports
+.cache
+.ruff_cache
+.pytest_cache
+
+# Environments
 .env
-*.egg-info
+.venv
+env/
+venv/
+
+# Checkpoints
 *.ipynb_checkpoints
-results/
+wandb
+
+# Repo specific
 notebooks/*
+results/
 basketball-instants-dataset
 ballistic-raw-sequences
 *.out
 *.log
-wandb
 *.pickle
 .vscode
 *.mp4
 *.db
-*.pytest_cache
-*.venv
