@@ -1,7 +1,3 @@
-[build-system]
-requires = ["hatchling", "hatch-vcs"]
-build-backend = "hatchling.build"
-
 [project]
 name = "deepsport"
 version = "1.6.0"
@@ -25,7 +21,6 @@ dependencies = [
     "experimentator",
     "deepsport-utilities",
     "dataset-utilities",
-    "deepsport",
 ]
 readme = "README.md"
 license = {file = "LICENSE.md"}
@@ -37,8 +32,11 @@ addopts = [
     "--import-mode=importlib", # required to resolve imported python modules of git submodules
 ]
 
+[tool.setuptools]
+packages = ["models", "tasks"] # packages 'models' and 'tasks' folders
+
 [tool.uv]
-package = false # this repo is not a package (and does not follow the src/ file structure)
+package = true # forces packaging 'deepsport'
 dev-dependencies = ["pytest>=8.3"]
 
 [tool.uv.workspace]
@@ -48,7 +46,6 @@ members = ["libs/*"]
 experimentator = { workspace = true }
 deepsport-utilities = { workspace = true }
 dataset-utilities = { workspace = true }
-deepsport = { workspace = true }
 
 [tool.ruff.lint]
 ignore = ["E731", "E741"]

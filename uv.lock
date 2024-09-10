@@ -683,7 +683,7 @@ wheels = [
 [[package]]
 name = "deepsport"
 version = "1.6.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "calib3d" },
     { name = "dataset-utilities" },
@@ -712,7 +712,6 @@ dev = [
 requires-dist = [
     { name = "calib3d", specifier = ">=2.10.0" },
     { name = "dataset-utilities", editable = "libs/dataset_utilities" },
-    { name = "deepsport", virtual = "." },
     { name = "deepsport-utilities", editable = "libs/deepsport_utilities" },
     { name = "dill", specifier = ">=0.3.6" },
     { name = "experimentator", editable = "libs/experimentator" },
