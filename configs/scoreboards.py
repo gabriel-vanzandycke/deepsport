@@ -9,7 +9,7 @@ import deepsport_utilities.ds.instants_dataset
 import deepsport_utilities.transforms
 import models.other
 import models.tensorflow
-import experimentator.wandb_experiment
+#import experimentator.wandb_experiment
 import tasks.scoreboards
 import models.icnet
 
@@ -25,17 +25,19 @@ batch_size = 16
 # Dataset parameters
 output_shape = (512, 512)
 dataset_name = "scoreboards_dataset.pickle"
+dataset = mlwf.PickledDataset(find(dataset_name))
 
 scale = .5
 transforms = [
     dataset_utilities.ds.scoreboards_dataset.RandomScalingCropperTransform(output_shape, scale=scale),
+    dataset_utilities.ds.scoreboards_dataset.FillBackgroundTransform(dataset),
     deepsport_utilities.transforms.DataExtractorTransform(
         dataset_utilities.ds.scoreboards_dataset.AddImageFactory(),
         dataset_utilities.ds.scoreboards_dataset.AddNumbersHeatmapFactory()
     ),
 ]
 
-dataset = mlwf.PickledDataset(find(dataset_name))
+
 dataset = mlwf.TransformedDataset(dataset, transforms)
 subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter()(dataset)
 
