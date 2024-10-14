@@ -24,8 +24,8 @@ batch_size = 16
 
 # Dataset parameters
 output_shape = (512, 512)
-dataset_name = "scoreboards_dataset.pickle"
-dataset = mlwf.PickledDataset(find(dataset_name))
+dataset_name = "scoreboards_dataset_full.pickle"
+dataset = experimentator.CachedPickledDataset(find(dataset_name))
 
 scale = .5
 transforms = [
@@ -49,6 +49,7 @@ callbacks = [
     #experimentator.LogStateDataCollector(),
     #experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
     #experimentator.wandb_experiment.LogStateWandB(),
+    experimentator.tf2_experiment.ProfileCallback(),
 ]
 
 globals().update(locals()) # required to use locals() in lambdas

@@ -5,22 +5,26 @@ authors = [
     {name = "Gabriel Van Zandycke", email = "gabriel.vanzandycke@hotmail.com"},
 ]
 description = "Experimentation framework for computer vision"
-requires-python = "~=3.10"
+requires-python = "==3.10.*"
 dependencies = [
-    "mlworkflow>=0.6.0",
     "dill>=0.3.6",
     "numpy>=1.22",
     "calib3d>=2.10.0",
     "pandas>=1.4.2",
-    "tensorflow>=2.11",
+    "tensorflow[and-cuda]==2.15.1",
     "python-dotenv>=0.21",
     "scikit-learn>=1.2",
     "jupyter>=1.0",
+    "matplotlib>=3.9.2",
     "tf_layers @ git+https://github.com/gabriel-vanzandycke/tf_layers@main",
     "icnet_tf2 @ git+https://github.com/gabriel-vanzandycke/icnet_tf2@master",
     "experimentator",
     "deepsport-utilities",
     "dataset-utilities",
+    "mlworkflow",
+    "tensorboard-plugin-profile==2.15.1",
+    "tensorboard==2.15.1",
+    "tensorrt>=10.5.0",
 ]
 readme = "README.md"
 license = {file = "LICENSE.md"}
@@ -46,6 +50,7 @@ members = ["libs/*"]
 experimentator = { workspace = true }
 deepsport-utilities = { workspace = true }
 dataset-utilities = { workspace = true }
+mlworkflow = { workspace = true }
 
 [tool.ruff.lint]
 ignore = ["E731", "E741"]

@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  notebook:
+    build: . # Builds the image from the Dockerfile in the current directory
+    image: deepsport:latest
+    hostname: "${HOSTNAME}" # environment variable defined in your .profile for instance
+    command: ["uv", "run", "jupyter", "notebook", "--port=${NB_PORT}", "--ip=${HOSTNAME}", "--allow-root", "--no-browser"]
+    ports:
+        - ${NB_PORT}:${NB_PORT}
+    environment:
+      LOCAL_STORAGE: /datasets
+      DATA_PATH: /datasets
+      RESULTS_FOLDER: /home/deepsport/results
+      LOCALSCRATCH: /localscratch
+    volumes:
+      - "${LOCAL_STORAGE}:/datasets"
+      - "${RESULTS_FOLDER}:/home/deepsport/results"
+      - "${LOCALSCRATCH}:/localscratch"
+      - ".:/home/deepsport" # It's really painfull to not have workdir mounted (for temporary files, benefit from changes, ...)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia # Uses all visible gpus (cgroup restrictions apply)
+              capabilities: [gpu]
+
+  tensorboard:
+    build: .
+    image: deepsport:latest
+    hostname: "${HOSTNAME}"
+    command: ["uv", "run", "tensorboard", "--port=${TB_PORT}", "--host=${HOSTNAME}", "--logdir=/home/deepsport/results/tensorboard", "--load_fast=false"]
+    ports:
+      - ${TB_PORT}:${TB_PORT}
+    volumes:
+      - "${RESULTS_FOLDER}:/home/deepsport/results"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia # Uses all visible gpus (cgroup restrictions apply)
+              capabilities: [gpu]
+

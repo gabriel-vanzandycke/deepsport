@@ -13,8 +13,6 @@ Clone and install the repository with
 git clone https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
 git submodule update --init --recursive
-pip install uv
-uv sync --extra dev
 ```
 
 Setup your environment by copying `.env.template` to `.env` and set the following variables:
@@ -22,8 +20,7 @@ Setup your environment by copying `.env.template` to `.env` and set the followin
 - `DATA_PATH` to the list of folders to find datasets or configuration files, ordered by lookup priority.
 - `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
 
-**Note:** Environment variable like `${HOME}` must be enclosed in curly brackets.
-
+**Note:** To use environment variables expension, variables should be enclosed in curly brackets (e.g. `${HOME}`)
 
 # Datasets
 
@@ -63,19 +60,44 @@ kaggle datasets download gabrielvanzandycke/ballistic-raw-sequences
 unzip -qo ./ballistic-raw-sequences.zip -d ballistic-raw-sequences
 ```
 
+
+
+# Setting-up environment
+
+Environment should be setup with `uv` (installable using your preferred package manager):
+```bash
+uv sync --extra dev
+```
+
+Alternatively, we provide docker containers for running jupyter notebook and tensorboard:
+```bash
+docker compose up -d
+```
+
+
 # Tasks
 
 The tasks are determined by a configuration file (located in the `configs` folder) that uses several functions and objects defined in the `models` and `tasks` folders. The tasks rely on a pre-processed dataset that needs to be computed and stored in your `DATA_PATH`.
 
-The models can be trained by running the following command from the project root folder (or by adding the project root folder to the `DATA_PATH` environment variable):
+## Unattended
+
+The models can be trained by running the following command from the project root folder:
 ```bash
 uv run python -m experimentator configs/<config-file> --epochs <numper-of-epochs>
 ```
+Alternatively, to have it run within the docker container, use instead:
+```bash
+docker compose exec notebook uv run python -m experimentator config/<config-file> --epochs <numper-of-epochs>
+```
 
-For interactive execution, you can launch Jupyter notebooks with:
+## interactively
+
+For interactive execution, you can launch jupyter notebooks with:
 ```bash
 uv run jupyter
 ```
+
+## Existing tasks
 
 Note: Configuration parameters can be overwritten from the command line by adding `--kwargs "<param-name>=<param-value>"`
 
@@ -85,7 +107,7 @@ Note: Configuration parameters can be overwritten from the command line by addin
 | **PIFBall**  | `configs/pifball.py`  | `scripts/prepare_camera_views_dataset.py` |         yes        |
 | **BallSize** | `configs/ballsize.py` | `scripts/prepare_ball_views_dataset.py`   |         yes        |
 
-## BallSeg: ball detection with a segmentation approach
+### BallSeg: ball detection with a segmentation approach
 
 This tasks addresses ball detection in basketball scenes. The pre-processed dataset items have the following attributes:
 - `image`: a `numpy.ndarray` RGB image with ball visible somewhere.
@@ -96,7 +118,7 @@ This tasks addresses ball detection in basketball scenes. The pre-processed data
 
 The notebook to load the dataset and run the model training is available here: `notebooks/run_ballseg_experiment.ipynb`.
 
-## PIFBall: ball detection with a Part-Intensity-Field
+### PIFBall: ball detection with a Part-Intensity-Field
 
 This tasks addresses ball detection using a keypoint detection approach greatly inspired by [PifPaf](https://openaccess.thecvf.com/content_CVPR_2019/papers/Kreiss_PifPaf_Composite_Fields_for_Human_Pose_Estimation_CVPR_2019_paper.pdf). The pre-processed dataset is the same than the one from the _BallSeg_ task.
 
@@ -105,7 +127,7 @@ This tasks addresses ball detection using a keypoint detection approach greatly 
 uv run python -m experimentator configs/pifball.py --epochs 101 --kwargs "eval_epochs=range(20,101,20)"
 ```
 
-## BallSize: ball diameter estimation for 3D localization
+### BallSize: ball diameter estimation for 3D localization
 
 This tasks addresses ball 3D localization from a single calibrated image. The pre-processed dataset items have the following attributes:
 - `image`: a `numpy.ndarray` RGB image thumbnail centered on the ball.
@@ -134,7 +156,7 @@ This task uses the split defined by [`DeepSportDatasetSplitter`](https://gitlab.
 3. Uses the remaining images for the **training-set**.
 The **testing-set** should not be used except to evaluate your model and when communicating about your method.
 
-## Ball state classification
+### Ball state classification
 
 To be released
 
