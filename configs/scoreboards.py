@@ -9,7 +9,7 @@ import deepsport_utilities.ds.instants_dataset
 import deepsport_utilities.transforms
 import models.other
 import models.tensorflow
-#import experimentator.wandb_experiment
+import experimentator.wandb_experiment
 import tasks.scoreboards
 import models.icnet
 
@@ -39,17 +39,17 @@ transforms = [
 
 
 dataset = mlwf.TransformedDataset(dataset, transforms)
-subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter()(dataset)
+subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter(evaluation_sets_repetitions=1)(dataset)
 
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
-    #experimentator.SaveWeights(),
-    #experimentator.SaveLearningRate(),
+    experimentator.SaveWeights(),
+    experimentator.SaveLearningRate(),
     experimentator.GatherCycleMetrics(),
-    #experimentator.LogStateDataCollector(),
+    experimentator.LogStateDataCollector(),
     #experimentator.LearningRateDecay(start=range(50,101,10), duration=2, factor=.5),
-    #experimentator.wandb_experiment.LogStateWandB(),
-    experimentator.tf2_experiment.ProfileCallback(),
+    experimentator.wandb_experiment.LogStateWandB(),
+    #experimentator.tf2_experiment.ProfileCallback(),
 ]
 
 globals().update(locals()) # required to use locals() in lambdas

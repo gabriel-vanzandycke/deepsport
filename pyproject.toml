@@ -30,6 +30,8 @@ readme = "README.md"
 license = {file = "LICENSE.md"}
 urls.Homepage = "https://github.com/gabriel-vanzandycke/deepsport"
 
+[project.optional-dependencies]
+wandb = ["wandb>=0.18.3"]
 
 [tool.pytest.ini_options]
 addopts = [

@@ -66,7 +66,8 @@ unzip -qo ./ballistic-raw-sequences.zip -d ballistic-raw-sequences
 
 Environment should be setup with `uv` (installable using your preferred package manager):
 ```bash
-uv sync --extra dev
+uv sync --extra dev \
+        --extra wandb    # For using WandB logging platform
 ```
 
 Alternatively, we provide docker containers for running jupyter notebook and tensorboard:
