@@ -35,7 +35,7 @@ class BallSizeEstimation(TensorflowExperiment):
         return batch_inputs_names
 
     # def batch_generator(self, subset: Subset, *args, batch_size=None, **kwargs):
-    #     if subset.type == SubsetType.EVAL or self.balancer is None:
+    #     if subset.type == Stage.EVAL or self.balancer is None:
     #         yield from super().batch_generator(subset, *args, batch_size=batch_size, **kwargs)
     #     else:
     #         batch_size = batch_size or self.batch_size

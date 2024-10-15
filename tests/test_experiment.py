@@ -20,7 +20,7 @@ import tensorflow as tf
 experiment_type=[experimentator.BaseExperiment, experimentator.tf2_experiment.TensorflowExperiment]
 subsets = [experimentator.Subset(
                             "subset_name",
-                            experimentator.SubsetType.EVAL,
+                            experimentator.Stage.EVAL,
                             mlworkflow.DictDataset({
                                 "k1":{"a":1, "b":2},
                                 "k2":{"a":2, "b":4}

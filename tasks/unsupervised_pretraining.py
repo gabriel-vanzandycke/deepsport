@@ -10,7 +10,7 @@ import cv2
 import tensorflow as tf
 
 from functools import cached_property
-from experimentator import SubsetType
+from experimentator import Stage
 from experimentator.tf2_experiment import TensorflowExperiment
 from experimentator.callbacked_experiment import Callback
 from dataset_utilities.transforms import Transform
@@ -86,7 +86,7 @@ class SetRandomBallPositionItemTransform(RandomBallByPairs):
 
 class SumAccuracyCallback(Callback):
     before = ["GatherCycleMetrics"]
-    when = SubsetType.EVAL
+    when = Stage.EVAL
     def on_cycle_begin(self, **_):
         self.TP = 0
         self.FP = 0

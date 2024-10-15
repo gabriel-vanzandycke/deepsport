@@ -113,7 +113,7 @@ if ws and (wp or wd):
 
 ## add ballistic dataset
 #dataset = mlwf.CachedDataset(mlwf.TransformedDataset(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
-#subsets.append(Subset("ballistic", SubsetType.EVAL, dataset))
+#subsets.append(Subset("ballistic", Stage.EVAL, dataset))
 
 decay_start = 10
 decay_step = 10

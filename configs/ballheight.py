@@ -125,8 +125,8 @@ subsets = [
     fixed_scale_subsets[1],
     fixed_scale_subsets[2],
     random_size_subsets[2],
-    experimentator.Subset("3d_testset",        experimentator.SubsetType.EVAL, mlwf.TransformedDataset(evaluation_dataset, [fixed_scale_cropper_transform, data_extractor_transform]), repetitions=repetitions),
-    experimentator.Subset("legacy_3d_testset", experimentator.SubsetType.EVAL, mlwf.TransformedDataset(evaluation_dataset, [random_size_cropper_transform, data_extractor_transform]), repetitions=repetitions),
+    experimentator.Subset("3d_testset",        experimentator.Stage.EVAL, mlwf.TransformedDataset(evaluation_dataset, [fixed_scale_cropper_transform, data_extractor_transform]), repetitions=repetitions),
+    experimentator.Subset("legacy_3d_testset", experimentator.Stage.EVAL, mlwf.TransformedDataset(evaluation_dataset, [random_size_cropper_transform, data_extractor_transform]), repetitions=repetitions),
 ]
 if public_dataset:
     random_size_subsets[3].name = "legacy_testing2"
