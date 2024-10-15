@@ -37,7 +37,7 @@ transforms = [
 ]
 
 dataset = experimentator.dataset.DataAugmentationDataset(dataset, transforms)
-#subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter(evaluation_sets_repetitions=1)(dataset)
+subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter(evaluation_sets_repetitions=1)(dataset)
 
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),
