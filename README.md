@@ -66,11 +66,12 @@ unzip -qo ./ballistic-raw-sequences.zip -d ballistic-raw-sequences
 
 Environment should be setup with `uv` (installable using your preferred package manager):
 ```bash
-uv sync --extra dev \
-        --extra wandb    # For using WandB logging platform
+uv sync --extra dev
+        --extra wandb          # For using WandB logging platform
+        --extra tensorboard    # For using TensorBoard
 ```
 
-Alternatively, we provide docker containers for running jupyter notebook and tensorboard:
+Optionally, Jupyterlab and TensorBoard are served on docker containers `notebook` and `tensorboard` on the ports configured in your `.env` file.
 ```bash
 docker compose up -d
 ```
@@ -80,20 +81,17 @@ docker compose up -d
 
 The tasks are determined by a configuration file (located in the `configs` folder) that uses several functions and objects defined in the `models` and `tasks` folders. The tasks rely on a pre-processed dataset that needs to be computed and stored in your `DATA_PATH`.
 
-## Unattended
-
-The models can be trained by running the following command from the project root folder:
+- Experimemnts are ran unattended using the following command from the project root folder:
 ```bash
 uv run python -m experimentator configs/<config-file> --epochs <numper-of-epochs>
 ```
-Alternatively, to have it run within the docker container, use instead:
+
+- To run experiments within a docker container, use the `notebook` container by running:
 ```bash
 docker compose exec notebook uv run python -m experimentator config/<config-file> --epochs <numper-of-epochs>
 ```
 
-## interactively
-
-For interactive execution, you can launch jupyter notebooks with:
+- For interactive execution, you can use the `notebook` container or launch jupyter notebooks with:
 ```bash
 uv run jupyter
 ```

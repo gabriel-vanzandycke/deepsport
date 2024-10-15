@@ -98,9 +98,9 @@ dataset_splitter = deepsport_utilities.ds.instants_dataset.DeepSportDatasetSplit
     validation_pc=15,
     repetitions={'testing': repetitions})
 
-fixed_scale_subsets = dataset_splitter(mlwf.TransformedDataset(dataset, [fixed_scale_cropper_transform, data_extractor_transform]))
-random_scale_subsets = dataset_splitter(mlwf.TransformedDataset(dataset, [random_scale_cropper_transform, data_extractor_transform]))
-random_size_subsets = dataset_splitter(mlwf.TransformedDataset(dataset, [random_size_cropper_transform, data_extractor_transform]))
+fixed_scale_subsets = dataset_splitter(experimentator.datasets.DataAugmentation(dataset, [fixed_scale_cropper_transform, data_extractor_transform]))
+random_scale_subsets = dataset_splitter(experimentator.datasets.DataAugmentation(dataset, [random_scale_cropper_transform, data_extractor_transform]))
+random_size_subsets = dataset_splitter(experimentator.datasets.DataAugmentation(dataset, [random_size_cropper_transform, data_extractor_transform]))
 
 balancer_str = None
 balancer = {
@@ -125,8 +125,8 @@ subsets = [
     fixed_scale_subsets[1],
     fixed_scale_subsets[2],
     random_size_subsets[2],
-    experimentator.Subset("3d_testset",        experimentator.Stage.EVAL, mlwf.TransformedDataset(evaluation_dataset, [fixed_scale_cropper_transform, data_extractor_transform]), repetitions=repetitions),
-    experimentator.Subset("legacy_3d_testset", experimentator.Stage.EVAL, mlwf.TransformedDataset(evaluation_dataset, [random_size_cropper_transform, data_extractor_transform]), repetitions=repetitions),
+    experimentator.Subset("3d_testset",        experimentator.Stage.EVAL, experimentator.datasets.DataAugmentation(evaluation_dataset, [fixed_scale_cropper_transform, data_extractor_transform]), repetitions=repetitions),
+    experimentator.Subset("legacy_3d_testset", experimentator.Stage.EVAL, experimentator.datasets.DataAugmentation(evaluation_dataset, [random_size_cropper_transform, data_extractor_transform]), repetitions=repetitions),
 ]
 if public_dataset:
     random_size_subsets[3].name = "legacy_testing2"

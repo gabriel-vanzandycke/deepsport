@@ -22,9 +22,6 @@ dependencies = [
     "deepsport-utilities",
     "dataset-utilities",
     "mlworkflow",
-    "tensorboard-plugin-profile==2.15.1",
-    "tensorboard==2.15.1",
-    "tensorrt>=10.5.0",
 ]
 readme = "README.md"
 license = {file = "LICENSE.md"}
@@ -32,6 +29,7 @@ urls.Homepage = "https://github.com/gabriel-vanzandycke/deepsport"
 
 [project.optional-dependencies]
 wandb = ["wandb>=0.18.3"]
+tensorboard = ["tensorboard-plugin-profile==2.15.1", "tensorboard==2.15.1", "tensorrt>=10.5.0"]
 
 [tool.pytest.ini_options]
 addopts = [
