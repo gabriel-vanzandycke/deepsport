@@ -100,7 +100,7 @@ dataset = {
     (True , True , False): lambda : experimentator.CachedPickledDataset(find(ids_name)),
     (True , True , True ): lambda : deepsport_utilities.dataset.MergedDataset(*[experimentator.CachedPickledDataset(find(name)) for name in [ids_name, sds_name]]),
 }[(wd>0, wp>0, ws>0)]() # call the lambda
-dataset = experimentator.datasets.DataAugmentation(dataset, transforms)
+dataset = experimentator.dataset.DataAugmentation(dataset, transforms)
 
 testing_arena_labels = ('KS-FR-STRASBOURG', 'KS-FR-GRAVELINES', 'KS-FR-BOURGEB')
 validation_arena_labels = ('KS-UK-NEWCASTLE', 'KS-US-IPSWICH', 'KS-FI-KAUHAJOKI', 'KS-FR-LEMANS', 'KS-FR-ESBVA', 'KS-FR-NANTES', 'KS-FR-EVREUX')
@@ -112,7 +112,7 @@ if ws and (wp or wd):
     subsets[0] = deepsport_utilities.dataset.BalancedSubset(subsets[0], ['InstantKey', 'SequenceInstantKey'], lambda k: k.__class__.__name__)
 
 ## add ballistic dataset
-#dataset = mlwf.CachedDataset(experimentator.datasets.DataAugmentation(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
+#dataset = mlwf.CachedDataset(experimentator.dataset.DataAugmentation(mlwf.PickledDataset(find("ballistic_ball_views.pickle")), transforms(.5)))
 #subsets.append(Subset("ballistic", Stage.EVAL, dataset))
 
 decay_start = 10

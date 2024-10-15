@@ -37,7 +37,7 @@ transforms = [
     ),
 ]
 
-dataset = experimentator.datasets.DataAugmentation(dataset, transforms)
+dataset = experimentator.dataset.DataAugmentation(dataset, transforms)
 subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter(evaluation_sets_repetitions=1)(dataset)
 
 callbacks = [
