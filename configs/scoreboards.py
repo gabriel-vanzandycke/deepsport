@@ -1,6 +1,5 @@
 import deepsport_utilities.dataset
 import tensorflow as tf
-import mlworkflow as mlwf
 import experimentator
 from experimentator import find
 import experimentator.tf2_experiment
@@ -37,8 +36,8 @@ transforms = [
     ),
 ]
 
-dataset = experimentator.dataset.DataAugmentation(dataset, transforms)
-subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter(evaluation_sets_repetitions=1)(dataset)
+dataset = experimentator.dataset.DataAugmentationDataset(dataset, transforms)
+#subsets = deepsport_utilities.ds.instants_dataset.KFoldsArenaLabelsTestingDatasetSplitter(evaluation_sets_repetitions=1)(dataset)
 
 callbacks = [
     experimentator.AverageMetrics([".*loss"]),

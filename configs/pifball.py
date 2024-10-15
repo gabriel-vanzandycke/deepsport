@@ -45,7 +45,7 @@ transforms = [
 #dataset_splitter = deepsport_utilities.ds.instants_dataset.TestingArenaLabelsDatasetSplitter(validation_pc=0, testing_arena_labels=['KS-FR-GRAVELINES', 'KS-FR-STRASBOURG'])
 fold = 0
 dataset_splitter = deepsport_utilities.ds.instants_dataset.dataset_splitters.KFoldsArenaLabelsTestingDatasetSplitter(8, 0, 1)
-dataset = experimentator.dataset.DataAugmentation(mlwf.PickledDataset(find(dataset_name)), transforms)
+dataset = experimentator.dataset.DataAugmentationDataset(mlwf.PickledDataset(find(dataset_name)), transforms)
 subsets = dataset_splitter(dataset, fold=fold)
 testing_arena_labels = dataset_splitter.testing_arena_labels
 

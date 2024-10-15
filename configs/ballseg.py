@@ -53,7 +53,7 @@ dataset_splitter = {
     "testarena": deepsport_utilities.ds.instants_dataset.dataset_splitters.TestingArenaLabelsDatasetSplitter(validation_pc=validation_pc, testing_arena_labels=testing_arena_labels),
 }[dataset_splitter_str]
 dataset = experimentator.CachedPickledDataset(find(dataset_name))
-dataset = experimentator.dataset.DataAugmentation(dataset, transforms)
+dataset = experimentator.dataset.DataAugmentationDataset(dataset, transforms)
 subsets = dataset_splitter(dataset, fold=fold)
 
 # Now set in `tasks.detection.HeatmapDetectionExperiment.train()`
