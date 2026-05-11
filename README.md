@@ -1,4 +1,4 @@
-This project implements State-of-the-art Computer Vision tasks related sport analysis, mostly related to ball 3D localization from a single viewpoint.
+This project implements State-of-the-art Computer Vision tasks related to sport analysis, mostly related to ball 3D localization from a single viewpoint.
 It's an open-source library developped under the DeepSport project funded by the Walloon Region of Belgium, Keemotion and SportRadar.
 It goes along with several open-source libraries:
  - [calib3d](https://github.com/ispgroupucl/calib3d): a library to ease computations in 2D and 3D homogenous coordinates and projective geometry with camera calibration.
@@ -10,9 +10,10 @@ It goes along with several open-source libraries:
 # Installation
 Clone and install the repository with
 ```bash
-git clone https://github.com/gabriel-vanzandycke/deepsport.git
+git clone --recurse-submodules https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
-git submodule update --init --recursive
+git submodule update --init libs/experimentator libs/deepsport_utilities
+git submodule update --init libs/dataset_utilities || true  # Private ptional submodule only accessible to authorized contributors
 ```
 
 Setup your environment by copying `.env.template` to `.env` and set the following variables:
@@ -21,6 +22,8 @@ Setup your environment by copying `.env.template` to `.env` and set the followin
 - `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
 
 **Note:** To use environment variables expension, variables should be enclosed in curly brackets (e.g. `${HOME}`)
+
+Initialize the uv project with
 
 # Datasets
 
