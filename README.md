@@ -12,8 +12,11 @@ Clone and install the repository with
 ```bash
 git clone --recurse-submodules https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
-git submodule update --init libs/experimentator libs/deepsport_utilities
-git submodule update --init libs/dataset_utilities || true  # Private ptional submodule only accessible to authorized contributors
+```
+
+Some task require access to a private submodule only accessible to authorized contributors with:
+```bash
+git clone git@gitlab.com:deepsport/dataset_utilities.git libs/dataset_utilities
 ```
 
 Setup your environment by copying `.env.template` to `.env` and set the following variables:
