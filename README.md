@@ -10,19 +10,15 @@ It goes along with several open-source libraries:
 # Installation
 Clone and install the repository with
 ```bash
-git clone --recurse-submodules https://github.com/gabriel-vanzandycke/deepsport.git
+git clone https://github.com/gabriel-vanzandycke/deepsport.git
 cd deepsport
-```
-
-Some task require access to a private submodule only accessible to authorized contributors:
-```bash
-git clone git@gitlab.com:deepsport/dataset_utilities.git libs/dataset_utilities
 ```
 
 Setup your environment by copying `.env.template` to `.env` and set the following variables:
 - `LOCAL_STORAGE` to the folder in which downloaded datasets should be stored.
 - `DATA_PATH` to the list of folders to find datasets or configuration files, ordered by lookup priority.
 - `RESULTS_FOLDER` to the full path to a folder in which outputs will be written (weigths and metrics).
+- `UV_INDEX_DATASET_UTILITIES` to the uv index for the private dependency `dataset_utilities`, only accessible to authorized contributors (optional)
 
 **Note:** To use environment variables expension, variables should be enclosed in curly brackets (e.g. `${HOME}`)
 

@@ -20,7 +20,6 @@ dependencies = [
     "icnet_tf2 @ git+https://github.com/gabriel-vanzandycke/icnet_tf2@master",
     "experimentator",
     "deepsport-utilities",
-    "dataset-utilities",
     "mlworkflow",
 ]
 readme = "README.md"
@@ -30,6 +29,7 @@ urls.Homepage = "https://github.com/gabriel-vanzandycke/deepsport"
 [project.optional-dependencies]
 wandb = ["wandb>=0.18.3"]
 tensorboard = ["tensorboard-plugin-profile==2.15.1", "tensorboard==2.15.1", "tensorrt>=10.5.0"]
+dataset-utilities = ["dataset-utilities"]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -45,12 +45,6 @@ dev-dependencies = ["pytest>=8.3"]
 
 [tool.uv.workspace]
 members = ["libs/*"]
-
-[tool.uv.sources]
-experimentator = { workspace = true }
-deepsport-utilities = { workspace = true }
-dataset-utilities = { workspace = true }
-mlworkflow = { workspace = true }
 
 [tool.ruff.lint]
 ignore = ["E731", "E741"]
