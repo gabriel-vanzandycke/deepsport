@@ -14,7 +14,7 @@ git clone --recurse-submodules https://github.com/gabriel-vanzandycke/deepsport.
 cd deepsport
 ```
 
-Some task require access to a private submodule only accessible to authorized contributors with:
+Some task require access to a private submodule only accessible to authorized contributors:
 ```bash
 git clone git@gitlab.com:deepsport/dataset_utilities.git libs/dataset_utilities
 ```
